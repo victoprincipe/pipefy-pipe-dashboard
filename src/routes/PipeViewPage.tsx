@@ -58,6 +58,7 @@ function createLoadingSchema(pipeId: string): PipeSchema {
 export function PipeViewPage() {
   const {
     ready,
+    userResolved,
     isInsidePipefy,
     pipefyApp,
     client,
@@ -122,19 +123,16 @@ export function PipeViewPage() {
     [views, activeViewId]
   );
 
-  // Required by Pipefy Apps SDK: call PipefyApp.render() immediately on mount inside Pipefy
+  // Required by Pipefy Apps SDK: call PipefyApp.render() right after PipefyApp.init() (client != null)
   useEffect(() => {
-    if (renderedRef.current) return;
-    const hasAppId = typeof window !== 'undefined' && window.location.search.includes('appID=');
-    const sdk = pipefyApp ?? (typeof window !== 'undefined' ? window.PipefyApp : null);
-    if (!sdk || (!isInsidePipefy && !hasAppId)) return;
+    if (!ready || !isInsidePipefy || !pipefyApp || !client || renderedRef.current) return;
     renderedRef.current = true;
     try {
-      sdk.render(() => {});
+      pipefyApp.render(() => {});
     } catch (err) {
       console.error('[PipeLens] PipefyApp.render() error:', err);
     }
-  }, [ready, isInsidePipefy, pipefyApp]);
+  }, [ready, isInsidePipefy, pipefyApp, client]);
 
   // Debounce global search
   useEffect(() => {
@@ -258,7 +256,7 @@ export function PipeViewPage() {
 
   // Initial load per (user.id, pipeId): check user's IndexedDB cache FIRST!
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !userResolved) return;
     let active = true;
 
     async function hydrateForUser() {
@@ -324,7 +322,7 @@ export function PipeViewPage() {
     return () => {
       active = false;
     };
-  }, [ready, user.id, pipeId]);
+  }, [ready, userResolved, user.id, pipeId]);
 
   // Listen to Pipefy live pipe events (onCardCreated, onCardDeleted, onCardUpdated)
   useEffect(() => {

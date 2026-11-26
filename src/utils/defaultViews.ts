@@ -46,8 +46,8 @@ export function buildDefaultViewsForSchema(schema: PipeSchema): DashboardView[] 
     hasNum
       ? {
           id: 'w-kpi-sum',
-          title: `${numLabel} Total`,
-          subtitle: 'Soma da carteira filtrada',
+          title: `Soma · ${numLabel}`,
+          subtitle: 'Volume financeiro na carteira filtrada',
           chartType: 'kpi',
           dimensionKey: stateField?.key || '__phase',
           metricOp: 'sum',
