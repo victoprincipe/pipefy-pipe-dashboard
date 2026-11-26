@@ -34,12 +34,11 @@ export function PipefySdkBridge() {
 
       try {
         if (isRootInit) {
-          const origin = window.location.origin;
           window.PipefyApp.initCall({
             'pipe-view': () => ({
-              icon: `${origin}/globe.svg`,
+              icon: './globe.svg',
               text: 'PipeLens Dashboard',
-              url: `${origin}/`,
+              url: './',
             }),
           });
         } else {
