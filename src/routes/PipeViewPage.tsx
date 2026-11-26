@@ -45,6 +45,16 @@ const IDLE_PROGRESS: SyncProgress = {
   elapsedMs: 0,
 };
 
+function createLoadingSchema(pipeId: string): PipeSchema {
+  return {
+    ...DEMO_PIPE_SCHEMA,
+    id: pipeId,
+    name: `Pipe #${pipeId} · Carregando...`,
+    cardsCount: 0,
+    openedCardsCount: 0,
+  };
+}
+
 export function PipeViewPage() {
   const {
     ready,
@@ -61,8 +71,13 @@ export function PipeViewPage() {
     workerRef.current = new AnalyticsWorkerClient();
   }
   const syncAbortRef = useRef<AbortController | null>(null);
+  const renderedRef = useRef(false);
 
-  const [schema, setSchema] = useState<PipeSchema>(DEMO_PIPE_SCHEMA);
+  const [schema, setSchema] = useState<PipeSchema>(() =>
+    typeof window !== 'undefined' && window.location.search.includes('appID=')
+      ? createLoadingSchema('307435909')
+      : DEMO_PIPE_SCHEMA
+  );
   const [views, setViews] = useState<DashboardView[]>(() =>
     buildDefaultViewsForSchema(DEMO_PIPE_SCHEMA)
   );
@@ -107,11 +122,15 @@ export function PipeViewPage() {
     [views, activeViewId]
   );
 
-  // Required by Pipefy Apps SDK: call PipefyApp.render() immediately when mounted inside Pipefy
+  // Required by Pipefy Apps SDK: call PipefyApp.render() immediately on mount inside Pipefy
   useEffect(() => {
-    if (!ready || !isInsidePipefy || !pipefyApp) return;
+    if (renderedRef.current) return;
+    const hasAppId = typeof window !== 'undefined' && window.location.search.includes('appID=');
+    const sdk = pipefyApp ?? (typeof window !== 'undefined' ? window.PipefyApp : null);
+    if (!sdk || (!isInsidePipefy && !hasAppId)) return;
+    renderedRef.current = true;
     try {
-      pipefyApp.render(() => {});
+      sdk.render(() => {});
     } catch (err) {
       console.error('[PipeLens] PipefyApp.render() error:', err);
     }
@@ -211,6 +230,12 @@ export function PipeViewPage() {
         });
         if (res.serverCacheStatus) {
           setServerCacheStatus(res.serverCacheStatus);
+        }
+        const savedViews = await userCacheDb.getViews(user.id, pipeId);
+        if (!savedViews || savedViews.views.length === 0) {
+          const nextDefaults = buildDefaultViewsForSchema(res.schema);
+          setViews(nextDefaults);
+          setActiveViewId(nextDefaults[0].id);
         }
         await loadCardsIntoWorker(res.cards, res.schema);
         const refreshed = await userCacheDb.getSnapshot(user.id, pipeId, ttlMinutes * 60_000);

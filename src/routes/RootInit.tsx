@@ -1,12 +1,14 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { PipeViewPage } from './PipeViewPage';
 import { usePipefyApp } from '../sdk/PipefyAppContext';
 
 export function RootInit() {
   const { ready, isInsidePipefy, pipefyApp } = usePipefyApp();
+  const calledRef = useRef(false);
 
   useEffect(() => {
-    if (!ready || !isInsidePipefy || !pipefyApp) return;
+    if (!ready || !isInsidePipefy || !pipefyApp || calledRef.current) return;
+    calledRef.current = true;
 
     pipefyApp.initCall({
       'pipe-view': function () {

@@ -54,6 +54,7 @@ export const DEMO_USERS: PipefyUser[] = [
 interface PipefyAppContextValue {
   ready: boolean;
   isInsidePipefy: boolean;
+  isRootFrame: boolean;
   pipefyApp: PipefyGlobalSdk | null;
   client: PipefySdkClient | null;
   user: PipefyUser;
@@ -75,7 +76,25 @@ function detectPipefyContext(): boolean {
   }
 }
 
+function resolveNumericPipeId(sdkClient: PipefySdkClient | null): string {
+  const fromApp = sdkClient?.app?.pipeId;
+  if (fromApp !== undefined && fromApp !== null && /^\d+$/.test(String(fromApp))) {
+    return String(fromApp);
+  }
+  const fromClient = sdkClient?.pipeId;
+  if (fromClient !== undefined && fromClient !== null && /^\d+$/.test(String(fromClient))) {
+    return String(fromClient);
+  }
+  if (typeof document !== 'undefined' && document.referrer) {
+    const match = document.referrer.match(/\/pipes\/(\d+)/);
+    if (match?.[1]) return match[1];
+  }
+  return '';
+}
+
 export function PipefyAppProvider({ children }: { children: React.ReactNode }) {
+  const isRootFrame =
+    typeof window !== 'undefined' && window.location.search.includes('root=true');
   const [ready, setReady] = useState(false);
   const [isInsidePipefy, setIsInsidePipefy] = useState(false);
   const [client, setClient] = useState<PipefySdkClient | null>(null);
@@ -96,6 +115,15 @@ export function PipefyAppProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      // On the hidden root=true frame, initCall() initializes the SDK itself and must run immediately.
+      if (isRootFrame) {
+        if (active) {
+          setIsInsidePipefy(true);
+          setReady(true);
+        }
+        return;
+      }
+
       try {
         const sdkClient = window.PipefyApp.init();
         if (!active) return;
@@ -104,13 +132,14 @@ export function PipefyAppProvider({ children }: { children: React.ReactNode }) {
         setClient(sdkClient);
         setLocale(sdkClient.locale || 'pt-br');
 
-        // Resolve numeric pipeId reliably (Pipefy docs recommend p.app.pipeId over p.pipeId)
-        const resolvedPipeId =
-          sdkClient.app?.pipeId !== undefined && sdkClient.app?.pipeId !== null
-            ? String(sdkClient.app.pipeId)
-            : '';
-
-        if (resolvedPipeId) {
+        let resolvedPipeId = resolveNumericPipeId(sdkClient);
+        if (!resolvedPipeId) {
+          const pipeInfo = await sdkClient.pipe();
+          if (pipeInfo?.id && /^\d+$/.test(String(pipeInfo.id))) {
+            resolvedPipeId = String(pipeInfo.id);
+          }
+        }
+        if (active && resolvedPipeId) {
           setPipeId(resolvedPipeId);
         }
 
@@ -125,13 +154,6 @@ export function PipefyAppProvider({ children }: { children: React.ReactNode }) {
             username: me.username,
           });
         }
-
-        if (!resolvedPipeId) {
-          const pipeInfo = await sdkClient.pipe();
-          if (active && pipeInfo?.id) {
-            setPipeId(String(pipeInfo.id));
-          }
-        }
       } catch (err) {
         console.error('[PipeLens] Falha ao inicializar PipefyApp SDK:', err);
       } finally {
@@ -143,7 +165,7 @@ export function PipefyAppProvider({ children }: { children: React.ReactNode }) {
     return () => {
       active = false;
     };
-  }, []);
+  }, [isRootFrame]);
 
   const switchDemoUser = (userId: string) => {
     const found = DEMO_USERS.find((u) => u.id === userId);
@@ -154,6 +176,7 @@ export function PipefyAppProvider({ children }: { children: React.ReactNode }) {
     () => ({
       ready,
       isInsidePipefy,
+      isRootFrame,
       pipefyApp: typeof window !== 'undefined' ? window.PipefyApp ?? null : null,
       client,
       user,
@@ -161,7 +184,7 @@ export function PipefyAppProvider({ children }: { children: React.ReactNode }) {
       locale,
       switchDemoUser,
     }),
-    [ready, isInsidePipefy, client, user, pipeId, locale]
+    [ready, isInsidePipefy, isRootFrame, client, user, pipeId, locale]
   );
 
   return <PipefyAppContext.Provider value={value}>{children}</PipefyAppContext.Provider>;
