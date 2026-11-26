@@ -282,7 +282,12 @@ export function PipeViewPage() {
           setActiveViewId(defaults[0].id);
         }
 
-        // If stale inside Pipefy, run lightweight incremental check
+        // If incomplete checkpoint or stale inside Pipefy, run incremental or full re-sync
+        if (!snapshotLookup.record.complete && isInsidePipefy && client) {
+          await startSync('auto');
+          return;
+        }
+
         if (snapshotLookup.meta.status === 'STALE' && isInsidePipefy && client) {
           syncIncrementalDelta({
             client,
@@ -292,6 +297,10 @@ export function PipeViewPage() {
           })
             .then(async (delta) => {
               if (!active) return;
+              if (delta.mode === 'needs_full_resync') {
+                await startSync('auto');
+                return;
+              }
               if (delta.mode === 'delta_tail') {
                 const updated = await userCacheDb.getSnapshot(user.id, pipeId, ttlMs);
                 if (updated.record) {

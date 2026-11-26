@@ -236,7 +236,7 @@ async function runBulkReportExport(params: {
       )
     );
 
-    if (statusObj?.fileURL && (state === 'done' || state === 'completed' || state === 'finished')) {
+    if (statusObj?.fileURL) {
       fileURL = statusObj.fileURL;
       break;
     }
