@@ -14,19 +14,17 @@ declare global {
   }
 }
 
-interface PipefySdkBridgeProps {
-  mode: 'root' | 'pipe-view';
-}
-
 /**
- * Registers Pipefy Apps SDK entrypoints (`initCall` on root iframe, `init` + `render` on `pipe-view`).
+ * Registers `PipefyApp.initCall` when loaded inside Pipefy's hidden root iframe (`?root=true`),
+ * or calls `PipefyApp.init()` + `PipefyApp.render()` when opened in the visible `pipe-view` tab.
  */
-export function PipefySdkBridge({ mode }: PipefySdkBridgeProps) {
+export function PipefySdkBridge() {
   useEffect(() => {
-    const isInsidePipefy =
-      window.self !== window.top || window.location.search.includes('appID=');
+    const search = window.location.search;
+    const isInsidePipefy = window.self !== window.top || search.includes('appID=');
     if (!isInsidePipefy) return;
 
+    const isRootInit = search.includes('root=true');
     let cancelled = false;
     let initialized = false;
 
@@ -35,13 +33,13 @@ export function PipefySdkBridge({ mode }: PipefySdkBridgeProps) {
       initialized = true;
 
       try {
-        if (mode === 'root') {
+        if (isRootInit) {
           const origin = window.location.origin;
           window.PipefyApp.initCall({
             'pipe-view': () => ({
               icon: `${origin}/globe.svg`,
               text: 'PipeLens Dashboard',
-              url: `${origin}/pipe-view`,
+              url: `${origin}/`,
             }),
           });
         } else {
@@ -71,7 +69,7 @@ export function PipefySdkBridge({ mode }: PipefySdkBridgeProps) {
       window.clearInterval(interval);
       window.clearTimeout(timeout);
     };
-  }, [mode]);
+  }, []);
 
   return null;
 }
