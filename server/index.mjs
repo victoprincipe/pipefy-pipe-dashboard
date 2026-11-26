@@ -138,6 +138,11 @@ async function handleFetchExport(req, res) {
     }
 
     const bytes = new Uint8Array(arrayBuf);
+    if (bytes.byteLength <= 100 || bytes[0] !== 0x50 || bytes[1] !== 0x4b) {
+      return sendJson(res, 502, {
+        error: 'Arquivo de exportação ainda em processamento no storage.',
+      });
+    }
     memoryCache.set(userId, pipeId, exportId, bytes, { fileUrl });
 
     applyCommonHeaders(res);

@@ -99,6 +99,11 @@ export default async function handler(req: any, res: any) {
     }
 
     const bytes = new Uint8Array(arrayBuf);
+    if (bytes.byteLength <= 100 || bytes[0] !== 0x50 || bytes[1] !== 0x4b) {
+      return res
+        .status(502)
+        .json({ error: 'Arquivo de exportação ainda em processamento no storage.' });
+    }
     userCache.set(userId, pipeId, exportId, bytes, { fileUrl });
 
     res.setHeader('Content-Type', 'application/octet-stream');

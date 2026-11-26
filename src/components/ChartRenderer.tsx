@@ -180,7 +180,7 @@ export function ChartRenderer({
             <YAxis
               type="category"
               dataKey="label"
-              width={118}
+              width={136}
               tick={{ fontSize: 11, fill: '#334155' }}
             />
             <Tooltip formatter={tooltipFormatter} />
@@ -207,6 +207,7 @@ export function ChartRenderer({
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} />
             <YAxis
+              width={76}
               tickFormatter={(v) => formatCompactNumber(v, widget.formatAsCurrency)}
               tick={{ fontSize: 11, fill: '#64748b' }}
             />
@@ -244,6 +245,7 @@ export function ChartRenderer({
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
             <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} />
             <YAxis
+              width={76}
               tickFormatter={(v) => formatCompactNumber(v, widget.formatAsCurrency)}
               tick={{ fontSize: 11, fill: '#64748b' }}
             />
@@ -273,6 +275,7 @@ export function ChartRenderer({
           <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
           <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} />
           <YAxis
+            width={76}
             tickFormatter={(v) => formatCompactNumber(v, widget.formatAsCurrency)}
             tick={{ fontSize: 11, fill: '#64748b' }}
           />

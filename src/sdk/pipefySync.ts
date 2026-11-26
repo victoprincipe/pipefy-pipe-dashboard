@@ -210,9 +210,12 @@ async function runBulkReportExport(params: {
   markLastExportTimestamp(userId, pipeId);
   const exportId = String(exportObj.id);
 
-  // 3. Poll pipeReportExport until completed
+  // 3. Poll pipeReportExport until fileURL appears, then download with resilient retries
+  // (Pipefy may populate fileURL while storage is still finalizing the XLSX object)
   let fileURL = '';
-  const maxWaitMs = 110_000;
+  let buffer: ArrayBuffer | null = null;
+  let serverCacheStatus = 'MISS';
+  const maxWaitMs = 95_000;
   let attempt = 0;
 
   while (Date.now() - startedAt < maxWaitMs) {
@@ -220,55 +223,73 @@ async function runBulkReportExport(params: {
       throw new DOMException('Sincronização cancelada.', 'AbortError');
     }
     attempt += 1;
-    const delayMs = attempt <= 3 ? 2000 : attempt <= 8 ? 3000 : 4000;
-    await sleep(delayMs, signal);
 
-    const pollRes = await client.query(PIPE_REPORT_EXPORT_QUERY, { id: exportId });
-    const statusObj = pollRes?.data?.pipeReportExport;
-    const state = String(statusObj?.state || '').toLowerCase();
+    if (!fileURL) {
+      const delayMs = attempt <= 3 ? 2000 : 3000;
+      await sleep(delayMs, signal);
 
-    const simulatedPct = Math.min(62, 22 + attempt * 5);
+      const pollRes = await client.query(PIPE_REPORT_EXPORT_QUERY, { id: exportId });
+      const statusObj = pollRes?.data?.pipeReportExport;
+      const state = String(statusObj?.state || '').toLowerCase();
+
+      if (state === 'failed' || state === 'error') {
+        throw new Error('Pipefy reportou erro ao gerar o arquivo de exportação.');
+      }
+
+      if (statusObj?.fileURL) {
+        fileURL = statusObj.fileURL;
+      } else {
+        const simulatedPct = Math.min(62, 22 + attempt * 5);
+        onProgress(
+          makeProgress(
+            'polling',
+            simulatedPct,
+            `Pipefy compilando exportação (${state || 'processando'}) · tentativa ${attempt}...`
+          )
+        );
+        continue;
+      }
+    }
+
+    // 4. Download via per-user proxy endpoint (retrying if storage is still propagating)
+    onProgress(makeProgress('downloading', 72, 'Baixando arquivo XLSX via proxy autenticado por usuário...'));
+    const proxyResp = await fetch('/api/fetch-export', {
+      method: 'POST',
+      signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Pipefy-User-Id': userId,
+        'X-Pipefy-Pipe-Id': pipeId,
+      },
+      body: JSON.stringify({ fileUrl: fileURL, pipeId, exportId }),
+    });
+
+    if (proxyResp.ok) {
+      const candidate = await proxyResp.arrayBuffer();
+      const bytes = new Uint8Array(candidate);
+      if (bytes.byteLength > 100 && bytes[0] === 0x50 && bytes[1] === 0x4b) {
+        serverCacheStatus = proxyResp.headers.get('X-PipeLens-Server-Cache') || 'MISS';
+        buffer = candidate;
+        break;
+      }
+    } else if (proxyResp.status !== 502 && proxyResp.status !== 404) {
+      const errText = await proxyResp.text();
+      throw new Error(`Proxy de exportação retornou HTTP ${proxyResp.status}: ${errText}`);
+    }
+
     onProgress(
       makeProgress(
-        'polling',
-        simulatedPct,
-        `Pipefy compilando exportação (${state || 'processando'}) · tentativa ${attempt}...`
+        'downloading',
+        74,
+        `Aguardando arquivo XLSX ficar disponível no storage (tentativa ${attempt})...`
       )
     );
-
-    if (statusObj?.fileURL) {
-      fileURL = statusObj.fileURL;
-      break;
-    }
-    if (state === 'failed' || state === 'error') {
-      throw new Error('Pipefy reportou erro ao gerar o arquivo de exportação.');
-    }
+    await sleep(3000, signal);
   }
 
-  if (!fileURL) {
+  if (!fileURL || !buffer) {
     throw new Error('Tempo limite excedido aguardando arquivo de exportação do Pipefy.');
   }
-
-  // 4. Download via per-user proxy endpoint
-  onProgress(makeProgress('downloading', 72, 'Baixando arquivo XLSX via proxy autenticado por usuário...'));
-  const proxyResp = await fetch('/api/fetch-export', {
-    method: 'POST',
-    signal,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Pipefy-User-Id': userId,
-      'X-Pipefy-Pipe-Id': pipeId,
-    },
-    body: JSON.stringify({ fileUrl: fileURL, pipeId, exportId }),
-  });
-
-  if (!proxyResp.ok) {
-    const errText = await proxyResp.text();
-    throw new Error(`Proxy de exportação retornou HTTP ${proxyResp.status}: ${errText}`);
-  }
-
-  const serverCacheStatus = proxyResp.headers.get('X-PipeLens-Server-Cache') || 'MISS';
-  const buffer = await proxyResp.arrayBuffer();
 
   // 5. Parse XLSX in Web Worker (zero UI freeze!)
   onProgress(
