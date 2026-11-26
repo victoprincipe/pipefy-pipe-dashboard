@@ -6,9 +6,9 @@
 
 - **Pipe de Teste (Pipefy):** https://app.pipefy.com/pipes/307435909
 - **Organização (Pipefy):** https://app.pipefy.com/organizations/302574355
-- **Aplicação Hospedada (HTTPS):** *(será preenchida após o deploy de produção na Vercel)*
-- **Manifest do App (`manifest.json`):** *(será preenchido após o deploy de produção na Vercel)*
-- **Repositório Público (GitHub):** *(será preenchido após a publicação no GitHub)*
+- **Aplicação Hospedada (HTTPS / Vercel):** https://pipefy-pipe-dashboard.vercel.app
+- **Manifest do App (`manifest.json`):** https://pipefy-pipe-dashboard.vercel.app/manifest.json
+- **Repositório Público (GitHub):** https://github.com/victoprincipe/pipefy-pipe-dashboard
 
 ---
 
