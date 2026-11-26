@@ -1,6 +1,6 @@
 import type { AggregationOp, AggregatedPoint } from '../types/dashboard';
 import type { NormalizedCard, PipeSchema } from '../types/pipefy';
-import { getCardRawValue } from '../workers/analyticsEngine';
+import { getCardRawValue } from './cardHelpers';
 
 export function formatMetricValue(
   value: number,

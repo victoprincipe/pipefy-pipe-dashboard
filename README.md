@@ -1,6 +1,6 @@
 # PipeLens Dashboard · Aplicativo Pipefy SDK (Case 1)
 
-**PipeLens** é um aplicativo nativo do **Pipefy Apps SDK** (`pipe-view` + `pipe-buttons`) projetado para transformar qualquer Pipe — incluindo pipes de alto volume como o **Tech. Consultants (Case 1)** com **20.000 cards** — em um dashboard analítico flexível, com construtor visual de gráficos, cross-filtering interativo, processamento em Web Worker e **cache estritamente isolado por usuário**.
+**PipeLens** é um aplicativo nativo do **Pipefy Apps SDK** (`pipe-view` + `pipe-buttons`) projetado para transformar qualquer Pipe — incluindo pipes de alto volume como o **Tech. Consultants (Case 1)** com **20.000 cards** — em um dashboard analítico flexível com **DuckDB-WASM (SQL colunar em Web Worker)**, construtor visual de gráficos, cross-filtering interativo e **cache Parquet estritamente isolado por usuário**.
 
 ## Links do Projeto
 
@@ -18,17 +18,18 @@
   - Registra uma visão em tela cheia (`PipeLens Dashboard`) no seletor de visões do Pipe e um botão no cabeçalho (`PipeLens Cache`) abrindo uma sidebar de telemetria.
   - Utiliza `PipefyApp.init()`, `PipefyApp.initCall()`, `PipefyApp.render()`, `PipefyApp.registerListener()` (`onCardCreated`, `onCardDeleted`), `p.query()`, `p.mutation()`, `p.set()`, `p.get()` e `p.openCard()` — **zero tokens hardcoded** no código-fonte.
 - **Estratégia Híbrida para 20.000+ Cards:**
-  1. **Fast-Path (Bulk Report Export):** cria/reutiliza o relatório `[PipeLens] Snapshot`, dispara `exportPipeReport`, faz polling de `pipeReportExport`, baixa o `.xlsx` via proxy autenticado por usuário (`/api/fetch-export`) e realiza o parsing fora da main thread em **Web Worker** (`SheetJS`).
-  2. **Fallback Automático (Paginação por Cursor):** se `exportPipeReport` estiver indisponível ou o pipe tiver < 500 cards, pagina `allCards(first: 50)` com retry/backoff, checkpoints no IndexedDB e renderização progressiva.
-  3. **Atualização Incremental:** compara `cards_count` e escuta eventos em tempo real do Pipefy (`onCardCreated`, `onCardDeleted`) para aplicar deltas sem re-exportar os 20.000 cards.
-- **Construtor Flexível de Visões e Gráficos:**
+  1. **Fast-Path (Bulk Report Export):** cria/reutiliza o relatório `[PipeLens] Snapshot`, dispara `exportPipeReport`, faz polling de `pipeReportExport`, baixa o `.xlsx` via proxy autenticado por usuário (`/api/fetch-export`), realiza o parsing da planilha em **Web Worker** (`SheetJS`) e ingere no **DuckDB-WASM**.
+  2. **Fallback Automático (Paginação por Cursor):** se `exportPipeReport` estiver indisponível ou o pipe tiver < 500 cards, pagina `allCards(first: 50)` com retry/backoff, checkpoints Parquet no IndexedDB e renderização progressiva.
+  3. **Atualização Incremental:** compara `cards_count` e escuta eventos em tempo real do Pipefy (`onCardCreated`, `onCardDeleted`) para aplicar deltas SQL (`DELETE` + `INSERT`) no DuckDB e regravar o Parquet sem re-exportar os 20.000 cards.
+- **Motor Analítico DuckDB-WASM + Construtor Flexível:**
+  - Queries SQL reais executadas no Web Worker single-thread (`duckdb-eh` / `duckdb-mvp`, compatível com iframe sem `COOP`/`COEP`) com catálogo tipado dinâmico gerado pelo schema do Pipe.
   - 7 tipos de visualização: **Barras Verticais**, **Barras Horizontais**, **Linha Temporal**, **Área**, **Rosca (Donut)**, **Cartão KPI** e **Tabela Dinâmica**.
-  - 7 agregações: `COUNT`, `SUM`, `AVG`, `MEDIAN`, `MIN`, `MAX`, `DISTINCT`.
+  - 7 agregações SQL: `COUNT`, `SUM`, `AVG`, `MEDIAN`, `MIN`, `MAX`, `DISTINCT`.
   - Granularidade temporal (`Dia`, `Semana`, `Mês`, `Trimestre`, `Ano`), histograma numérico automático, Top N com agrupamento em `"Outros"`, ordenação configurável e **pré-visualização ao vivo** no modal.
-  - Múltiplas visões nomeáveis (criar, renomear, excluir, importar/exportar JSON) + **Explorador de Cards** paginado com abertura direta do card no Pipefy.
+  - Múltiplas visões nomeáveis (criar, renomear, excluir, importar/exportar JSON) + **Explorador de Cards** paginado em SQL (`LIMIT`/`OFFSET`) com abertura direta do card no Pipefy.
   - **Cross-filtering interativo** entre gráficos ao clicar em barras, fatias ou pontos.
-- **Cache Isolado por Usuário (Browser + Proxy Server):**
-  - **Camada 1 (IndexedDB no Browser):** chave composta `${userId}::${pipeId}`, com controle de TTL (`HIT` / `STALE` / `MISS`), *Stale-While-Revalidate* e limpeza seletiva apenas do usuário atual.
+- **Cache Isolado por Usuário (Parquet no IndexedDB + Proxy Server):**
+  - **Camada 1 (IndexedDB com Parquet Comprimido):** chave composta `${userId}::${pipeId}`, armazenando o snapshot colunar `.parquet` gerado pelo DuckDB-WASM (~1–2 MB para 20k cards vs ~13 MB JSON), com TTL (`HIT` / `STALE` / `MISS`), *Stale-While-Revalidate* e limpeza seletiva apenas do usuário atual.
   - **Camada 2 (Memória LRU no Proxy `/api/fetch-export`):** chave composta `${userId}::${pipeId}::${exportId}` e proteção anti-SSRF por allowlist de domínios HTTPS.
   - **Camada 3 (Pipefy SDK `p.set('pipe', 'private', ...)`):** sincronização privada das configurações de visões do usuário quando dentro do limite de tamanho.
 

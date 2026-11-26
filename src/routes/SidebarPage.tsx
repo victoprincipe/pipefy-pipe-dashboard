@@ -59,7 +59,7 @@ export function SidebarPage() {
           </div>
         </div>
         <div className="kv-box">
-          <div className="kv-label">Tamanho</div>
+          <div className="kv-label">Tamanho ({meta?.storageFormat === 'json' ? 'JSON' : 'Parquet'})</div>
           <div className="kv-val mono-num">{formatBytes(meta?.estimatedBytes ?? 0)}</div>
         </div>
         <div className="kv-box">

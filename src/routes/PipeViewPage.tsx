@@ -96,6 +96,8 @@ export function PipeViewPage() {
     ttlMs: DEFAULT_CACHE_TTL_MS,
     ageMs: 0,
     strategy: null,
+    storageFormat: 'parquet',
+    engine: 'duckdb-wasm',
     cardsCount: 0,
     totalCardsInPipe: 0,
     estimatedBytes: 0,
@@ -165,9 +167,9 @@ export function PipeViewPage() {
 
   const loadCardsIntoWorker = useCallback(
     async (cards: NormalizedCard[], nextSchema: PipeSchema) => {
+      await workerRef.current!.setDataset(cards, nextSchema);
       setSchema(nextSchema);
       setTotalCount(cards.length);
-      await workerRef.current!.setDataset(cards, nextSchema);
     },
     []
   );
@@ -179,7 +181,7 @@ export function PipeViewPage() {
       syncAbortRef.current = abort;
 
       if (!isInsidePipefy || !client) {
-        // Standalone Preview: generate deterministic 20,000-card dataset and persist to user's IndexedDB
+        // Standalone Preview: generate 20k demo dataset, load into DuckDB-WASM and persist Parquet in user's IndexedDB
         const t0 = Date.now();
         setSyncProgress({
           phase: 'parsing',
@@ -187,22 +189,26 @@ export function PipeViewPage() {
           loaded: 0,
           total: 20000,
           percent: 35,
-          message: 'Gerando 20.000 cards demonstrativos para o cache deste usuário...',
+          message: 'Gerando 20.000 cards demonstrativos no DuckDB-WASM (Parquet)...',
           startedAt: t0,
           elapsedMs: 0,
         });
         const demo = generateDemoDataset(20000);
-        await userCacheDb.saveSnapshot({
+        await workerRef.current!.setDataset(demo.cards, demo.schema);
+        const parquetBytes = await workerRef.current!.exportParquet();
+        await userCacheDb.saveParquetSnapshot({
           userId: user.id,
           pipeId,
-          cards: demo.cards,
+          parquetBytes,
+          cardsCount: demo.cards.length,
           pipeSchema: demo.schema,
           strategy: 'demo_seed',
           totalCardsInPipe: demo.cards.length,
           ttlMs: ttlMinutes * 60_000,
           complete: true,
         });
-        await loadCardsIntoWorker(demo.cards, demo.schema);
+        setSchema(demo.schema);
+        setTotalCount(demo.cards.length);
         const refreshed = await userCacheDb.getSnapshot(user.id, pipeId, ttlMinutes * 60_000);
         setCacheMeta(refreshed.meta);
         setSyncProgress(IDLE_PROGRESS);
@@ -235,7 +241,8 @@ export function PipeViewPage() {
           setViews(nextDefaults);
           setActiveViewId(nextDefaults[0].id);
         }
-        await loadCardsIntoWorker(res.cards, res.schema);
+        setSchema(res.schema);
+        setTotalCount(res.cardsCount);
         const refreshed = await userCacheDb.getSnapshot(user.id, pipeId, ttlMinutes * 60_000);
         setCacheMeta(refreshed.meta);
         setSyncProgress(IDLE_PROGRESS);
@@ -254,7 +261,7 @@ export function PipeViewPage() {
     [isInsidePipefy, client, user.id, pipeId, ttlMinutes, loadCardsIntoWorker]
   );
 
-  // Initial load per (user.id, pipeId): check user's IndexedDB cache FIRST!
+  // Initial load per (user.id, pipeId): check user's IndexedDB Parquet cache FIRST!
   useEffect(() => {
     if (!ready || !userResolved) return;
     let active = true;
@@ -269,9 +276,43 @@ export function PipeViewPage() {
       if (!active) return;
       setCacheMeta(snapshotLookup.meta);
 
-      if (snapshotLookup.record) {
-        const activeSchema = snapshotLookup.record.pipeSchema;
-        await loadCardsIntoWorker(snapshotLookup.record.cards, activeSchema);
+      if (snapshotLookup.record && (snapshotLookup.record.parquetBytes || snapshotLookup.record.cards)) {
+        const rec = snapshotLookup.record;
+        const activeSchema = rec.pipeSchema;
+        let loadedCount = 0;
+
+        if (rec.parquetBytes) {
+          const loaded = await workerRef.current!.loadParquet(rec.parquetBytes, activeSchema);
+          loadedCount = loaded.count;
+          if (!active) return;
+          setSchema(activeSchema);
+          setTotalCount(loadedCount);
+        } else if (rec.cards) {
+          loadedCount = rec.cards.length;
+          await loadCardsIntoWorker(rec.cards, activeSchema);
+          // Silently upgrade legacy v1 JSON snapshot to compressed Parquet in DuckDB-WASM
+          workerRef.current!
+            .exportParquet()
+            .then(async (parquetBytes) => {
+              await userCacheDb.saveParquetSnapshot({
+                userId: user.id,
+                pipeId,
+                parquetBytes,
+                cardsCount: loadedCount,
+                pipeSchema: activeSchema,
+                strategy: rec.strategy,
+                totalCardsInPipe: rec.totalCardsInPipe,
+                ttlMs: rec.ttlMs,
+                reportId: rec.reportId,
+                lastCursor: rec.lastCursor,
+                complete: rec.complete,
+              });
+              if (!active) return;
+              const upgraded = await userCacheDb.getSnapshot(user.id, pipeId, ttlMs);
+              setCacheMeta(upgraded.meta);
+            })
+            .catch(() => {});
+        }
 
         if (savedViews && savedViews.views.length > 0) {
           setViews(savedViews.views);
@@ -283,7 +324,7 @@ export function PipeViewPage() {
         }
 
         // If incomplete checkpoint or stale inside Pipefy, run incremental or full re-sync
-        if (!snapshotLookup.record.complete && isInsidePipefy && client) {
+        if (!rec.complete && isInsidePipefy && client) {
           await startSync('auto');
           return;
         }
@@ -293,7 +334,8 @@ export function PipeViewPage() {
             client,
             userId: user.id,
             pipeId,
-            existingCount: snapshotLookup.record.cards.length,
+            existingCount: loadedCount,
+            worker: workerRef.current!,
           })
             .then(async (delta) => {
               if (!active) return;
@@ -303,10 +345,9 @@ export function PipeViewPage() {
               }
               if (delta.mode === 'delta_tail') {
                 const updated = await userCacheDb.getSnapshot(user.id, pipeId, ttlMs);
-                if (updated.record) {
-                  setCacheMeta(updated.meta);
-                  await loadCardsIntoWorker(updated.record.cards, updated.record.pipeSchema);
-                }
+                setCacheMeta(updated.meta);
+                setSchema(delta.schema);
+                setTotalCount(delta.cardsCount);
               }
             })
             .catch(() => {});
@@ -333,34 +374,55 @@ export function PipeViewPage() {
     };
   }, [ready, userResolved, user.id, pipeId]);
 
-  // Listen to Pipefy live pipe events (onCardCreated, onCardDeleted, onCardUpdated)
+  // Listen to Pipefy live pipe events (onCardCreated, onCardDeleted)
   useEffect(() => {
     if (!ready || !isInsidePipefy || !pipefyApp?.registerListener || !client) return;
     try {
       pipefyApp.registerListener('onCardCreated', async (payload: any) => {
         if (!payload?.internalId && !payload?.id) return;
         const cardId = String(payload.internalId ?? payload.id);
-        await fetchAndPatchSingleCard({ client, userId: user.id, pipeId, cardId, schema });
-        const snap = await userCacheDb.getSnapshot(user.id, pipeId, ttlMinutes * 60_000);
-        if (snap.record) {
+        const patched = await fetchAndPatchSingleCard({
+          client,
+          userId: user.id,
+          pipeId,
+          cardId,
+          schema,
+          worker: workerRef.current!,
+        });
+        if (patched.card) {
+          const snap = await userCacheDb.getSnapshot(user.id, pipeId, ttlMinutes * 60_000);
           setCacheMeta(snap.meta);
-          await loadCardsIntoWorker(snap.record.cards, snap.record.pipeSchema);
+          setTotalCount(patched.cardsCount);
         }
       });
       pipefyApp.registerListener('onCardDeleted', async (payload: any) => {
         const cardId = String(payload?.internalId ?? payload?.id ?? '');
         if (!cardId) return;
-        await userCacheDb.patchCards({ userId: user.id, pipeId, deletedIds: [cardId] });
-        const snap = await userCacheDb.getSnapshot(user.id, pipeId, ttlMinutes * 60_000);
-        if (snap.record) {
-          setCacheMeta(snap.meta);
-          await loadCardsIntoWorker(snap.record.cards, snap.record.pipeSchema);
+        const { count } = await workerRef.current!.deleteCards([cardId]);
+        const parquetBytes = await workerRef.current!.exportParquet();
+        const prevSnap = await userCacheDb.getSnapshot(user.id, pipeId, ttlMinutes * 60_000);
+        if (prevSnap.record) {
+          await userCacheDb.saveParquetSnapshot({
+            userId: user.id,
+            pipeId,
+            parquetBytes,
+            cardsCount: count,
+            pipeSchema: prevSnap.record.pipeSchema,
+            strategy: prevSnap.record.strategy,
+            totalCardsInPipe: count,
+            ttlMs: prevSnap.record.ttlMs,
+            reportId: prevSnap.record.reportId,
+            complete: prevSnap.record.complete,
+          });
+          const nextSnap = await userCacheDb.getSnapshot(user.id, pipeId, ttlMinutes * 60_000);
+          setCacheMeta(nextSnap.meta);
+          setTotalCount(count);
         }
       });
     } catch {
       // registerListener throws outside pipe-view
     }
-  }, [ready, isInsidePipefy, pipefyApp, client, user.id, pipeId, schema, ttlMinutes, loadCardsIntoWorker]);
+  }, [ready, isInsidePipefy, pipefyApp, client, user.id, pipeId, schema, ttlMinutes]);
 
   // Recompute active view widgets / explorer inside Web Worker
   useEffect(() => {
@@ -542,12 +604,13 @@ export function PipeViewPage() {
       await startSync('auto');
       return;
     }
+    const existingCount = snap.record.cardsCount ?? snap.record.cards?.length ?? 0;
     const t0 = Date.now();
     setSyncProgress({
       phase: 'meta',
       strategy: 'incremental',
-      loaded: snap.record.cards.length,
-      total: snap.record.cards.length,
+      loaded: existingCount,
+      total: existingCount,
       percent: 50,
       message: 'Verificando atualizações incrementais no Pipe...',
       startedAt: t0,
@@ -558,17 +621,17 @@ export function PipeViewPage() {
         client,
         userId: user.id,
         pipeId,
-        existingCount: snap.record.cards.length,
+        existingCount,
+        worker: workerRef.current!,
       });
       if (delta.mode === 'needs_full_resync') {
         await startSync('bulk_report');
         return;
       }
       const nextSnap = await userCacheDb.getSnapshot(user.id, pipeId, ttlMinutes * 60_000);
-      if (nextSnap.record) {
-        setCacheMeta(nextSnap.meta);
-        await loadCardsIntoWorker(nextSnap.record.cards, nextSnap.record.pipeSchema);
-      }
+      setCacheMeta(nextSnap.meta);
+      setSchema(delta.schema);
+      setTotalCount(delta.cardsCount);
       setSyncProgress(IDLE_PROGRESS);
     } catch {
       await startSync('auto');

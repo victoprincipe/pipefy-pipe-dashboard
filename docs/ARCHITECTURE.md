@@ -17,11 +17,12 @@ flowchart TB
     GQL["Pipefy GraphQL API (/graphql)"]
   end
 
-  subgraph AppClient["PipeLens Frontend (React + Vite)"]
+  subgraph AppClient["PipeLens Frontend (React + Vite + DuckDB-WASM)"]
     SDK["PipefyAppContext (PipefyApp SDK)"]
     Sync["Sync Híbrido (Bulk Report + Cursor Fallback)"]
-    IDB["UserIndexedDbCache (userId::pipeId)"]
-    Worker["Web Worker (SheetJS + Analytics Engine)"]
+    IDB["UserIndexedDbCache (Parquet bytes · userId::pipeId)"]
+    XLSXW["XLSX Web Worker (SheetJS Parse)"]
+    DuckDB["DuckDB-WASM Worker (SQL + Parquet · eh/mvp)"]
     UI["Precision Daylight UI (Recharts + Builder)"]
   end
 
@@ -41,10 +42,11 @@ flowchart TB
   Sync -->|2. Download XLSX| Proxy
   Proxy --> LRU
   LRU -->|Cache MISS| S3
-  Sync -->|3. Parse & Index| Worker
-  Sync -->|4. Persist Snapshot| IDB
-  IDB -->|Cache HIT instantâneo| Worker
-  Worker -->|Agregações < 30ms| UI
+  Sync -->|3. Parse XLSX| XLSXW
+  XLSXW -->|4. Ingestão + COPY TO Parquet| DuckDB
+  DuckDB -->|5. Persiste .parquet| IDB
+  IDB -->|Cache HIT Parquet| DuckDB
+  DuckDB -->|SQL Colunar < 30ms| UI
 ```
 
 ---
@@ -77,10 +79,13 @@ flowchart TD
   SizeCheck -->|Não| Cursor
 ```
 
-### Desacoplamento de Computação com Web Worker (`src/workers/analytics.worker.ts`)
+### Motor Analítico DuckDB-WASM & Web Workers (`src/db/` e `src/workers/xlsx.worker.ts`)
 
-- **Parsing de `.xlsx` fora da Main Thread:** planilhas de 20.000 linhas em `SheetJS` são transferidas via `ArrayBuffer` (`Transferable`) para o Worker, evitando qualquer congelamento de scroll ou clique na interface do Pipefy.
-- **Motor de Agregação Vetorial em Memória:** os 20.000 cards normalizados ficam residentes na memória do Worker. Filtros textuais usam índice pré-computado `searchText` em cada card, e todas as agregações (`COUNT`, `SUM`, `AVG`, `MEDIAN`, `MIN`, `MAX`, `DISTINCT`, bucketing por data e histogramas numéricos) rodam em **~5–30 ms** para 20.000 registros.
+- **Parsing de `.xlsx` fora da Main Thread:** planilhas de 20.000 linhas em `SheetJS` são transferidas via `ArrayBuffer` (`Transferable`) para `xlsx.worker.ts`, evitando qualquer congelamento de scroll ou clique na interface do Pipefy.
+- **Execução SQL Colunar no DuckDB-WASM (`src/db/duckdbEngine.ts`):**
+  - Utiliza exclusivamente os bundles **single-thread** (`duckdb-eh.wasm` / `duckdb-mvp.wasm`) dentro do Web Worker oficial do DuckDB, evitando dependência de `SharedArrayBuffer` / headers `COOP`+`COEP` que falhariam dentro do iframe cross-origin do Pipefy (`app.pipefy.com`).
+  - **Catálogo Dinâmico Tipado (`src/db/schemaCatalog.ts`):** gera `CREATE TABLE cards (...)` dinamicamente a partir de `pipe.start_form_fields` (`number` → `DOUBLE`, `boolean` → `BOOLEAN`, demais → `VARCHAR`), validando identificadores contra *whitelist* e escapando parâmetros literais para impedir SQL Injection.
+  - **Consultas Analíticas & Paginação Server-like:** filtros (`WHERE`), agregações (`COUNT`, `SUM`, `AVG`, `MEDIAN`, `MIN`, `MAX`, `DISTINCT`), bucketing temporal (`DATE_TRUNC` / `strftime`), histogramas numéricos e paginação (`ORDER BY ... LIMIT 50 OFFSET ...`) rodam em SQL vetorizado no Worker, trafegando apenas os buckets agregados ou a página atual para a interface React.
 
 ---
 
@@ -93,8 +98,9 @@ flowchart TD
 ### Cache em 3 Camadas com Separação Estrita por Usuário
 
 1. **Identidade Canônica do Usuário:** no boot dentro do Pipefy, o `PipefyAppContext` executa `p.query('{ me { id name email username } }')`. Nenhum cache é gravado sem um `userId` explícito.
-2. **Camada 1 — IndexedDB no Navegador (`src/cache/userIndexedDb.ts`):**
+2. **Camada 1 — IndexedDB com Parquet Comprimido (`src/cache/userIndexedDb.ts`):**
    - Banco `pipefy_pipelens_cache_v1` com stores `snapshots` e `views`.
+   - Os 20.000 cards são exportados pelo próprio DuckDB-WASM para **Apache Parquet** (`COPY cards TO ... (FORMAT PARQUET)`), reduzindo o snapshot de ~13,6 MB (JSON v1) para **~1–2 MB** binários colunares, com upgrade transparente de registros v1 legados para Parquet.
    - Chave composta obrigatória: `${userId}::${pipeId}` + validação dupla `record.userId === userId` na leitura e na limpeza.
    - Limpar o cache (`clearUserCache(userId)`) remove exclusivamente os registros indexados pelo `userId` solicitante.
    - Política **Stale-While-Revalidate** com TTL configurável (padrão: 15 minutos).

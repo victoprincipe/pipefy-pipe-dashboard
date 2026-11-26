@@ -26,6 +26,7 @@ const MIME_TYPES = {
   '.png': 'image/png',
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
+  '.wasm': 'application/wasm',
 };
 
 function applyCommonHeaders(res) {
@@ -187,9 +188,13 @@ async function serveStatic(reqPath, res) {
     const data = await fs.readFile(fileToServe);
     const ext = path.extname(fileToServe).toLowerCase();
     applyCommonHeaders(res);
-    res.writeHead(200, {
+    const headers = {
       'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
-    });
+    };
+    if (reqPath.startsWith('/assets/')) {
+      headers['Cache-Control'] = 'public, max-age=31536000, immutable';
+    }
+    res.writeHead(200, headers);
     res.end(data);
   } catch {
     sendJson(res, 404, { error: 'Build não encontrado. Execute "npm run build" antes de "npm start".' });

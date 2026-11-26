@@ -91,7 +91,9 @@ export function CacheDrawer({
           </div>
 
           <div>
-            <h3 style={{ margin: '0 0 8px', fontSize: 13 }}>Status do Snapshot Local (IndexedDB)</h3>
+            <h3 style={{ margin: '0 0 8px', fontSize: 13 }}>
+              Status do Snapshot Local (DuckDB Parquet · IndexedDB)
+            </h3>
             <div className="kv-grid">
               <div className="kv-box">
                 <div className="kv-label">Estado</div>
@@ -104,8 +106,14 @@ export function CacheDrawer({
                 </div>
               </div>
               <div className="kv-box">
-                <div className="kv-label">Tamanho Estimado</div>
+                <div className="kv-label">Tamanho em Cache</div>
                 <div className="kv-val mono-num">{formatBytes(cacheMeta.estimatedBytes)}</div>
+              </div>
+              <div className="kv-box">
+                <div className="kv-label">Formato / Motor</div>
+                <div className="kv-val mono-num">
+                  {cacheMeta.storageFormat === 'json' ? 'JSON · DuckDB' : 'Parquet · DuckDB-WASM'}
+                </div>
               </div>
               <div className="kv-box">
                 <div className="kv-label">Último Sync</div>
@@ -117,7 +125,7 @@ export function CacheDrawer({
                 <div className="kv-label">Estratégia</div>
                 <div className="kv-val mono-num">{cacheMeta.strategy ?? '—'}</div>
               </div>
-              <div className="kv-box">
+              <div className="kv-box" style={{ gridColumn: '1 / -1' }}>
                 <div className="kv-label">Proxy Server Cache</div>
                 <div className="kv-val mono-num">{serverCacheStatus ?? 'N/A'}</div>
               </div>

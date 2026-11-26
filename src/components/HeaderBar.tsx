@@ -88,7 +88,7 @@ export function HeaderBar({
               {workerMs !== null && (
                 <>
                   <span>·</span>
-                  <span className="mono-num">Worker {workerMs} ms</span>
+                  <span className="mono-num">DuckDB {workerMs} ms</span>
                 </>
               )}
             </div>

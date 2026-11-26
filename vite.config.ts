@@ -22,6 +22,9 @@ export default defineConfig({
   worker: {
     format: 'es'
   },
+  optimizeDeps: {
+    exclude: ['@duckdb/duckdb-wasm']
+  },
   test: {
     environment: 'jsdom',
     globals: true

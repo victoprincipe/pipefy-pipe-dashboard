@@ -1,3 +1,5 @@
+import { createBrowserDuckDbBackend } from '../db/duckdbBackend';
+import { DuckDbAnalyticsEngine } from '../db/duckdbEngine';
 import type {
   ExplorerQuery,
   ExplorerResult,
@@ -13,15 +15,21 @@ interface PendingCall {
 }
 
 export class AnalyticsWorkerClient {
-  private worker: Worker;
+  private readonly engine: DuckDbAnalyticsEngine;
+  private xlsxWorker: Worker | null = null;
   private seq = 0;
   private pending = new Map<number, PendingCall>();
 
   constructor() {
-    this.worker = new Worker(new URL('./analytics.worker.ts', import.meta.url), {
+    this.engine = new DuckDbAnalyticsEngine(createBrowserDuckDbBackend);
+  }
+
+  private getXlsxWorker(): Worker {
+    if (this.xlsxWorker) return this.xlsxWorker;
+    const worker = new Worker(new URL('./xlsx.worker.ts', import.meta.url), {
       type: 'module',
     });
-    this.worker.onmessage = (event) => {
+    worker.onmessage = (event) => {
       const { id, ok, payload, error } = event.data as {
         id: number;
         ok: boolean;
@@ -34,38 +42,67 @@ export class AnalyticsWorkerClient {
       if (ok) {
         entry.resolve(payload);
       } else {
-        entry.reject(new Error(error || 'Erro no Web Worker de análise.'));
+        entry.reject(new Error(error || 'Erro no Web Worker de planilha.'));
       }
     };
-    this.worker.onerror = (err) => {
+    worker.onerror = (err) => {
       for (const entry of this.pending.values()) {
-        entry.reject(new Error(err.message || 'Falha fatal no Web Worker.'));
+        entry.reject(new Error(err.message || 'Falha fatal no XLSX Worker.'));
       }
       this.pending.clear();
     };
+    this.xlsxWorker = worker;
+    return worker;
   }
 
-  private call<T>(message: Record<string, unknown>, transferables?: Transferable[]): Promise<T> {
+  private callXlsxWorker<T>(
+    message: Record<string, unknown>,
+    transferables?: Transferable[]
+  ): Promise<T> {
+    const worker = this.getXlsxWorker();
     const id = ++this.seq;
     return new Promise<T>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
       if (transferables && transferables.length > 0) {
-        this.worker.postMessage({ id, ...message }, transferables);
+        worker.postMessage({ id, ...message }, transferables);
       } else {
-        this.worker.postMessage({ id, ...message });
+        worker.postMessage({ id, ...message });
       }
     });
   }
 
-  setDataset(cards: NormalizedCard[], schema: PipeSchema): Promise<{ count: number }> {
-    return this.call({ type: 'SET_DATASET', cards, schema });
+  async setDataset(cards: NormalizedCard[], schema: PipeSchema): Promise<{ count: number }> {
+    const res = await this.engine.loadCards(cards, schema);
+    return { count: res.count };
   }
 
-  parseXlsx(
+  async loadParquet(parquetBytes: Uint8Array, schema: PipeSchema): Promise<{ count: number; loadMs: number }> {
+    return this.engine.loadParquet(parquetBytes, schema);
+  }
+
+  exportParquet(): Promise<Uint8Array> {
+    return this.engine.exportParquet();
+  }
+
+  upsertCards(cards: NormalizedCard[], schema: PipeSchema): Promise<{ count: number }> {
+    return this.engine.upsertCards(cards, schema);
+  }
+
+  deleteCards(ids: string[]): Promise<{ count: number }> {
+    return this.engine.deleteCards(ids);
+  }
+
+  async parseXlsx(
     buffer: ArrayBuffer,
     schema: PipeSchema
   ): Promise<{ cards: NormalizedCard[]; count: number; parseMs: number }> {
-    return this.call({ type: 'PARSE_XLSX', buffer, schema }, [buffer]);
+    const parsed = await this.callXlsxWorker<{
+      cards: NormalizedCard[];
+      count: number;
+      parseMs: number;
+    }>({ type: 'PARSE_XLSX', buffer, schema }, [buffer]);
+    await this.engine.loadCards(parsed.cards, schema);
+    return parsed;
   }
 
   computeDashboard(params: {
@@ -80,7 +117,7 @@ export class AnalyticsWorkerClient {
     explorer?: ExplorerResult;
     totalMs: number;
   }> {
-    return this.call({ type: 'COMPUTE_DASHBOARD', ...params });
+    return this.engine.computeDashboard(params);
   }
 
   computeWidget(params: {
@@ -88,11 +125,11 @@ export class AnalyticsWorkerClient {
     filters: FilterRule[];
     widget: WidgetConfig;
   }): Promise<WidgetComputationResult> {
-    return this.call({ type: 'COMPUTE_WIDGET', ...params });
+    return this.engine.computeWidget(params);
   }
 
   getSuggestions(fieldKey: string, limit = 25): Promise<{ values: string[] }> {
-    return this.call({ type: 'GET_SUGGESTIONS', fieldKey, limit });
+    return this.engine.getSuggestions(fieldKey, limit);
   }
 
   getFilteredCards(
@@ -100,11 +137,13 @@ export class AnalyticsWorkerClient {
     filters: FilterRule[],
     limit?: number
   ): Promise<{ cards: NormalizedCard[] }> {
-    return this.call({ type: 'GET_FILTERED_CARDS', globalSearch, filters, limit });
+    return this.engine.getFilteredCards(globalSearch, filters, limit);
   }
 
   terminate() {
-    this.worker.terminate();
+    this.xlsxWorker?.terminate();
+    this.xlsxWorker = null;
     this.pending.clear();
+    void this.engine.terminate();
   }
 }

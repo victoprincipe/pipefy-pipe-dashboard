@@ -1,5 +1,6 @@
 import type {
   CacheSnapshotMeta,
+  CacheStorageFormat,
   NormalizedCard,
   PipeSchema,
   SyncStrategy,
@@ -18,11 +19,14 @@ export interface CachedSnapshotRecord {
   userId: string;
   pipeId: string;
   schemaVersion: number;
+  storageFormat?: CacheStorageFormat;
   syncedAt: number;
   ttlMs: number;
   strategy: SyncStrategy;
   totalCardsInPipe: number;
-  cards: NormalizedCard[];
+  cardsCount?: number;
+  parquetBytes?: Uint8Array;
+  cards?: NormalizedCard[];
   pipeSchema: PipeSchema;
   reportId?: string;
   lastCursor?: string | null;
@@ -125,6 +129,8 @@ export class UserIndexedDbCache {
             ttlMs: ttlOverrideMs ?? DEFAULT_CACHE_TTL_MS,
             ageMs: 0,
             strategy: null,
+            storageFormat: 'parquet',
+            engine: 'duckdb-wasm',
             cardsCount: 0,
             totalCardsInPipe: 0,
             estimatedBytes: 0,
@@ -136,6 +142,9 @@ export class UserIndexedDbCache {
       const effectiveTtl = ttlOverrideMs ?? record.ttlMs ?? DEFAULT_CACHE_TTL_MS;
       const ageMs = Math.max(0, Date.now() - record.syncedAt);
       const status: 'HIT' | 'STALE' = ageMs <= effectiveTtl && record.complete ? 'HIT' : 'STALE';
+      const cardsCount = record.cardsCount ?? record.cards?.length ?? 0;
+      const storageFormat: CacheStorageFormat =
+        record.storageFormat ?? (record.parquetBytes ? 'parquet' : 'json');
 
       return {
         record,
@@ -147,13 +156,60 @@ export class UserIndexedDbCache {
           ttlMs: effectiveTtl,
           ageMs,
           strategy: record.strategy,
-          cardsCount: record.cards.length,
+          storageFormat,
+          engine: 'duckdb-wasm',
+          cardsCount,
           totalCardsInPipe: record.totalCardsInPipe,
           estimatedBytes: record.estimatedBytes,
           reportId: record.reportId,
           complete: record.complete,
         },
       };
+    } finally {
+      db.close();
+    }
+  }
+
+  async saveParquetSnapshot(params: {
+    userId: string;
+    pipeId: string;
+    parquetBytes: Uint8Array;
+    cardsCount: number;
+    pipeSchema: PipeSchema;
+    strategy: SyncStrategy;
+    totalCardsInPipe: number;
+    ttlMs?: number;
+    reportId?: string;
+    lastCursor?: string | null;
+    complete: boolean;
+  }): Promise<CachedSnapshotRecord> {
+    const cacheKey = buildKey(params.userId, params.pipeId);
+    const clonedBytes = new Uint8Array(params.parquetBytes);
+    const record: CachedSnapshotRecord = {
+      cacheKey,
+      userId: String(params.userId).trim(),
+      pipeId: String(params.pipeId).trim(),
+      schemaVersion: 2,
+      storageFormat: 'parquet',
+      syncedAt: Date.now(),
+      ttlMs: params.ttlMs ?? DEFAULT_CACHE_TTL_MS,
+      strategy: params.strategy,
+      totalCardsInPipe: params.totalCardsInPipe,
+      cardsCount: params.cardsCount,
+      parquetBytes: clonedBytes,
+      pipeSchema: params.pipeSchema,
+      reportId: params.reportId,
+      lastCursor: params.lastCursor ?? null,
+      complete: params.complete,
+      estimatedBytes: clonedBytes.byteLength,
+    };
+
+    const db = await openDatabase();
+    try {
+      const tx = db.transaction(STORE_SNAPSHOTS, 'readwrite');
+      tx.objectStore(STORE_SNAPSHOTS).put(record);
+      await txDone(tx);
+      return record;
     } finally {
       db.close();
     }
@@ -178,10 +234,12 @@ export class UserIndexedDbCache {
       userId: String(params.userId).trim(),
       pipeId: String(params.pipeId).trim(),
       schemaVersion: 1,
+      storageFormat: 'json',
       syncedAt: Date.now(),
       ttlMs: params.ttlMs ?? DEFAULT_CACHE_TTL_MS,
       strategy: params.strategy,
       totalCardsInPipe: params.totalCardsInPipe,
+      cardsCount: params.cards.length,
       cards: params.cards,
       pipeSchema: params.pipeSchema,
       reportId: params.reportId,
@@ -209,7 +267,7 @@ export class UserIndexedDbCache {
     totalCardsInPipe?: number;
   }): Promise<CachedSnapshotRecord | null> {
     const lookup = await this.getSnapshot(params.userId, params.pipeId);
-    if (!lookup.record) return null;
+    if (!lookup.record || !lookup.record.cards) return null;
 
     const deletedSet = new Set((params.deletedIds ?? []).map(String));
     const upsertMap = new Map<string, NormalizedCard>();
@@ -344,7 +402,7 @@ export class UserIndexedDbCache {
         .filter((r) => r.userId === cleanUser)
         .map((r) => ({
           pipeId: r.pipeId,
-          cardsCount: r.cards.length,
+          cardsCount: r.cardsCount ?? r.cards?.length ?? 0,
           syncedAt: r.syncedAt,
           estimatedBytes: r.estimatedBytes,
         }));

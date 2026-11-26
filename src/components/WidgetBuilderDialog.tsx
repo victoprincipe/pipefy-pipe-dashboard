@@ -383,7 +383,7 @@ export function WidgetBuilderDialog({
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBlockEnd: 10 }}>
                   <span style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)' }}>
-                    Pré-visualização ao vivo (Web Worker)
+                    Pré-visualização ao vivo (DuckDB-WASM SQL)
                   </span>
                   {previewResult && (
                     <span className="mono-num" style={{ fontSize: 11.5, color: 'var(--accent-teal)' }}>

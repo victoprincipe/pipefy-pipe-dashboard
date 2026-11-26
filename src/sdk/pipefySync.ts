@@ -31,6 +31,7 @@ export interface SyncCallbacks {
 
 export interface SyncResult {
   cards: NormalizedCard[];
+  cardsCount: number;
   schema: PipeSchema;
   strategy: SyncStrategy;
   reportId?: string;
@@ -313,12 +314,13 @@ async function runCursorPagination(params: {
   userId: string;
   pipeId: string;
   schema: PipeSchema;
+  worker: AnalyticsWorkerClient;
   startedAt: number;
   signal?: AbortSignal;
   onProgress: (p: SyncProgress) => void;
   onPartialCards?: (cards: NormalizedCard[], schema: PipeSchema) => void;
 }): Promise<NormalizedCard[]> {
-  const { client, userId, pipeId, schema, startedAt, signal, onProgress, onPartialCards } = params;
+  const { client, userId, pipeId, schema, worker, startedAt, signal, onProgress, onPartialCards } = params;
   const accumulated: NormalizedCard[] = [];
   let cursor: string | null = null;
   let hasNext = true;
@@ -374,18 +376,25 @@ async function runCursorPagination(params: {
       elapsedMs: Date.now() - startedAt,
     });
 
-    // Checkpoint & progressive render every 250 cards
+    // Progressive UI render every 250 cards
     if (pageCount % 5 === 0 || !hasNext) {
       onPartialCards?.([...accumulated], schema);
-      await userCacheDb.saveSnapshot({
+    }
+
+    // Periodic Parquet checkpoint during long pagination (every 1,000 cards while incomplete)
+    if (hasNext && pageCount % 20 === 0) {
+      await worker.setDataset([...accumulated], schema);
+      const parquetBytes = await worker.exportParquet();
+      await userCacheDb.saveParquetSnapshot({
         userId,
         pipeId,
-        cards: accumulated,
+        parquetBytes,
+        cardsCount: accumulated.length,
         pipeSchema: schema,
         strategy: 'cursor_pagination',
         totalCardsInPipe: total,
         lastCursor: cursor,
-        complete: !hasNext,
+        complete: false,
       });
     }
 
@@ -438,17 +447,20 @@ export async function syncPipeHybrid(params: {
   }
 
   if (schema.cardsCount === 0) {
-    await userCacheDb.saveSnapshot({
+    await worker.setDataset([], schema);
+    const parquetBytes = await worker.exportParquet();
+    await userCacheDb.saveParquetSnapshot({
       userId,
       pipeId,
-      cards: [],
+      parquetBytes,
+      cardsCount: 0,
       pipeSchema: schema,
       strategy: 'cursor_pagination',
       totalCardsInPipe: 0,
       ttlMs,
       complete: true,
     });
-    return { cards: [], schema, strategy: 'cursor_pagination' };
+    return { cards: [], cardsCount: 0, schema, strategy: 'cursor_pagination' };
   }
 
   const useBulk =
@@ -464,9 +476,16 @@ export async function syncPipeHybrid(params: {
     ) {
       // Recently exported; if we have cached cards, keep them or inform user
       const cached = await userCacheDb.getSnapshot(userId, pipeId, ttlMs);
-      if (cached.record && cached.record.cards.length > 0) {
+      const cachedCount = cached.record?.cardsCount ?? cached.record?.cards?.length ?? 0;
+      if (cached.record && cachedCount > 0) {
+        if (cached.record.parquetBytes) {
+          await worker.loadParquet(cached.record.parquetBytes, schema);
+        } else if (cached.record.cards) {
+          await worker.setDataset(cached.record.cards, schema);
+        }
         return {
-          cards: cached.record.cards,
+          cards: cached.record.cards ?? [],
+          cardsCount: cachedCount,
           schema,
           strategy: 'bulk_report',
           reportId: cached.record.reportId,
@@ -487,10 +506,12 @@ export async function syncPipeHybrid(params: {
         onProgress: callbacks.onProgress,
       });
 
-      await userCacheDb.saveSnapshot({
+      const parquetBytes = await worker.exportParquet();
+      await userCacheDb.saveParquetSnapshot({
         userId,
         pipeId,
-        cards: bulk.cards,
+        parquetBytes,
+        cardsCount: bulk.cards.length,
         pipeSchema: schema,
         strategy: 'bulk_report',
         totalCardsInPipe: Math.max(schema.cardsCount, bulk.cards.length),
@@ -505,13 +526,14 @@ export async function syncPipeHybrid(params: {
         loaded: bulk.cards.length,
         total: Math.max(schema.cardsCount, bulk.cards.length),
         percent: 100,
-        message: `${bulk.cards.length.toLocaleString('pt-BR')} cards sincronizados via Bulk Export.`,
+        message: `${bulk.cards.length.toLocaleString('pt-BR')} cards sincronizados no DuckDB (Parquet).`,
         startedAt,
         elapsedMs: Date.now() - startedAt,
       });
 
       return {
         cards: bulk.cards,
+        cardsCount: bulk.cards.length,
         schema,
         strategy: 'bulk_report',
         reportId: bulk.reportId,
@@ -532,16 +554,20 @@ export async function syncPipeHybrid(params: {
     userId,
     pipeId,
     schema,
+    worker,
     startedAt,
     signal,
     onProgress: callbacks.onProgress,
     onPartialCards: callbacks.onPartialCards,
   });
 
-  await userCacheDb.saveSnapshot({
+  await worker.setDataset(cards, schema);
+  const parquetBytes = await worker.exportParquet();
+  await userCacheDb.saveParquetSnapshot({
     userId,
     pipeId,
-    cards,
+    parquetBytes,
+    cardsCount: cards.length,
     pipeSchema: schema,
     strategy: 'cursor_pagination',
     totalCardsInPipe: Math.max(schema.cardsCount, cards.length),
@@ -555,12 +581,12 @@ export async function syncPipeHybrid(params: {
     loaded: cards.length,
     total: Math.max(schema.cardsCount, cards.length),
     percent: 100,
-    message: `${cards.length.toLocaleString('pt-BR')} cards sincronizados via GraphQL.`,
+    message: `${cards.length.toLocaleString('pt-BR')} cards sincronizados no DuckDB (Parquet).`,
     startedAt,
     elapsedMs: Date.now() - startedAt,
   });
 
-  return { cards, schema, strategy: 'cursor_pagination' };
+  return { cards, cardsCount: cards.length, schema, strategy: 'cursor_pagination' };
 }
 
 export async function syncIncrementalDelta(params: {
@@ -568,17 +594,19 @@ export async function syncIncrementalDelta(params: {
   userId: string;
   pipeId: string;
   existingCount: number;
+  worker: AnalyticsWorkerClient;
 }): Promise<{
   schema: PipeSchema;
   upserted: NormalizedCard[];
+  cardsCount: number;
   mode: 'up_to_date' | 'delta_tail' | 'needs_full_resync';
 }> {
-  const { client, userId, pipeId, existingCount } = params;
+  const { client, userId, pipeId, existingCount, worker } = params;
   const schema = await fetchPipeSchema(client, pipeId);
   const diff = schema.cardsCount - existingCount;
 
   if (diff > 50 || diff < -10) {
-    return { schema, upserted: [], mode: 'needs_full_resync' };
+    return { schema, upserted: [], cardsCount: existingCount, mode: 'needs_full_resync' };
   }
 
   const tailCount = Math.min(50, Math.max(10, Math.abs(diff) + 10));
@@ -591,17 +619,31 @@ export async function syncIncrementalDelta(params: {
     .filter((e: any) => e?.node)
     .map((e: any) => normalizeGraphQLCard(e.node, schema));
 
-  await userCacheDb.patchCards({
+  if (upserted.length === 0 && diff === 0) {
+    return { schema, upserted, cardsCount: existingCount, mode: 'up_to_date' };
+  }
+
+  const { count } = await worker.upsertCards(upserted, schema);
+  const parquetBytes = await worker.exportParquet();
+  const existing = await userCacheDb.getSnapshot(userId, pipeId);
+  await userCacheDb.saveParquetSnapshot({
     userId,
     pipeId,
-    upsertedCards: upserted,
-    totalCardsInPipe: schema.cardsCount,
+    parquetBytes,
+    cardsCount: count,
+    pipeSchema: schema,
+    strategy: existing.record?.strategy ?? 'bulk_report',
+    totalCardsInPipe: Math.max(schema.cardsCount, count),
+    ttlMs: existing.record?.ttlMs,
+    reportId: existing.record?.reportId,
+    complete: existing.record?.complete ?? true,
   });
 
   return {
     schema,
     upserted,
-    mode: diff === 0 && upserted.length === 0 ? 'up_to_date' : 'delta_tail',
+    cardsCount: count,
+    mode: 'delta_tail',
   };
 }
 
@@ -611,17 +653,28 @@ export async function fetchAndPatchSingleCard(params: {
   pipeId: string;
   cardId: string;
   schema: PipeSchema;
-}): Promise<NormalizedCard | null> {
-  const { client, userId, pipeId, cardId, schema } = params;
+  worker: AnalyticsWorkerClient;
+}): Promise<{ card: NormalizedCard | null; cardsCount: number }> {
+  const { client, userId, pipeId, cardId, schema, worker } = params;
   const res = await client.query(SINGLE_CARD_QUERY, { id: cardId });
   const node = res?.data?.card;
-  if (!node) return null;
+  if (!node) return { card: null, cardsCount: 0 };
 
   const card = normalizeGraphQLCard(node, schema);
-  await userCacheDb.patchCards({
+  const { count } = await worker.upsertCards([card], schema);
+  const parquetBytes = await worker.exportParquet();
+  const existing = await userCacheDb.getSnapshot(userId, pipeId);
+  await userCacheDb.saveParquetSnapshot({
     userId,
     pipeId,
-    upsertedCards: [card],
+    parquetBytes,
+    cardsCount: count,
+    pipeSchema: schema,
+    strategy: existing.record?.strategy ?? 'bulk_report',
+    totalCardsInPipe: Math.max(schema.cardsCount, count),
+    ttlMs: existing.record?.ttlMs,
+    reportId: existing.record?.reportId,
+    complete: existing.record?.complete ?? true,
   });
-  return card;
+  return { card, cardsCount: count };
 }

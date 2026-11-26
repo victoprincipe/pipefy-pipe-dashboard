@@ -1,7 +1,7 @@
 import { ArrowDown, ArrowUp, Download, ExternalLink } from 'lucide-react';
 import type { ExplorerQuery, ExplorerResult } from '../types/dashboard';
 import type { PipeSchema } from '../types/pipefy';
-import { getCardRawValue } from '../workers/analyticsEngine';
+import { getCardRawValue } from '../utils/cardHelpers';
 
 interface CardExplorerTableProps {
   schema: PipeSchema;

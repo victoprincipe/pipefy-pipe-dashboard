@@ -86,6 +86,8 @@ export interface SyncProgress {
   error?: string;
 }
 
+export type CacheStorageFormat = 'parquet' | 'json';
+
 export interface CacheSnapshotMeta {
   userId: string;
   pipeId: string;
@@ -94,6 +96,8 @@ export interface CacheSnapshotMeta {
   ttlMs: number;
   ageMs: number;
   strategy: SyncStrategy | null;
+  storageFormat?: CacheStorageFormat;
+  engine?: 'duckdb-wasm';
   cardsCount: number;
   totalCardsInPipe: number;
   estimatedBytes: number;
