@@ -1,0 +1,12 @@
+{
+  "name": "PipeLens Dashboard",
+  "short_description": "Dashboard analítico flexível com Web Worker e cache por usuário para pipes de alto volume (20k+ cards).",
+  "description": "PipeLens transforma qualquer Pipe do Pipefy em um painel analítico interativo e configurável, com sincronização híbrida (Bulk Report Export + fallback incremental GraphQL), agregações em Web Worker e cache estritamente isolado por usuário.",
+  "icon": "./icon.svg",
+  "author": "Victo Principe Pessoa Borges",
+  "init_url": "./",
+  "features": [
+    "pipe-view",
+    "pipe-buttons"
+  ]
+}
