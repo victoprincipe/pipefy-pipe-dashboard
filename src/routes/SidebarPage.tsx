@@ -33,7 +33,7 @@ export function SidebarPage() {
   };
 
   return (
-    <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div className="sidebar-shell">
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <ShieldCheck size={18} color="#0d9488" />
         <strong style={{ fontSize: 15 }}>PipeLens · Cache por Usuário</strong>

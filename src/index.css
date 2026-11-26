@@ -42,9 +42,13 @@
 }
 
 html,
-body {
+body,
+#root {
   margin: 0;
   padding: 0;
+  block-size: 100%;
+  inline-size: 100%;
+  overflow: hidden;
   background: var(--bg-canvas);
   color: var(--text-primary);
   font-family: var(--font-sans);
@@ -59,9 +63,27 @@ body {
 }
 
 .app-shell {
-  min-block-size: 100dvh;
+  block-size: 100%;
+  inline-size: 100%;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.sidebar-shell {
+  block-size: 100%;
+  inline-size: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 
 /* Header */
@@ -308,7 +330,7 @@ body {
 
 /* Main Content */
 .main-workspace {
-  flex: 1;
+  flex: 1 0 auto;
   padding: 16px 20px 36px;
   max-inline-size: 1680px;
   inline-size: 100%;
