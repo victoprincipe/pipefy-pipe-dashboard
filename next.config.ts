@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  allowedDevOrigins: ["*.trycloudflare.com", "app.pipefy.com", "*.pipefy.com"],
   cacheComponents: true,
   partialPrefetching: true,
   async headers() {
