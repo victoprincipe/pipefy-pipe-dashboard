@@ -1,11 +1,9 @@
-import { PipefySdkBridge } from '@/components/PipefySdkBridge';
-import { SimpleBarChart } from '@/components/SimpleBarChart';
+import { PipefyDashboard } from '@/components/PipefyDashboard';
 
 export default function Home() {
   return (
-    <main className="flex h-screen w-full items-center justify-center overflow-y-auto bg-zinc-50 p-6 font-sans dark:bg-black">
-      <PipefySdkBridge />
-      <SimpleBarChart />
+    <main className="h-screen w-full overflow-hidden bg-canvas font-sans text-ink">
+      <PipefyDashboard />
     </main>
   );
 }

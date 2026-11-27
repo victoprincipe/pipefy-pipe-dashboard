@@ -1,0 +1,349 @@
+/* ==========================================================================
+   PipeLens — Motion system
+   Guidance: iart-ai/web-animation-skills
+   (micro-interaction, 60fps-animation, accessible-animation)
+
+   Rules of the house:
+   - Only `transform` / `opacity` are animated (compositor-only).
+   - Enter ~140–320ms, ease-out; press ~140ms.
+   - Tiered reduced motion: drop movement, keep short fades and spinners.
+   ========================================================================== */
+
+@theme static {
+  --ease-pf-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-pf-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-pf-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+/* --------------------------------------------------------------------------
+   Keyframes
+   -------------------------------------------------------------------------- */
+
+@keyframes pf-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes pf-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pf-pop {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes pf-panel-in {
+  from {
+    opacity: 0.5;
+    transform: translate3d(-18px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes pf-modal-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes pf-toast {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0) scale(0.97);
+  }
+  12%,
+  90% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, -4px, 0) scale(0.99);
+  }
+}
+
+@keyframes pf-toast-fade {
+  0% {
+    opacity: 0;
+  }
+  12%,
+  90% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Entrances
+   `backwards` keeps the "from" state during the stagger delay, then releases
+   the element so hover transforms keep working.
+   -------------------------------------------------------------------------- */
+
+.pf-reveal {
+  animation-delay: var(--pf-delay, 0ms);
+}
+
+.pf-fade-in {
+  animation-delay: var(--pf-delay, 0ms);
+}
+
+.pf-pop-in {
+  animation-delay: var(--pf-delay, 0ms);
+}
+
+.pf-panel-in {
+  animation-delay: var(--pf-delay, 0ms);
+}
+
+.pf-list-in {
+  animation-delay: var(--pf-delay, 0ms);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .pf-reveal {
+    animation: pf-rise 520ms var(--ease-pf-out) backwards;
+  }
+
+  .pf-fade-in {
+    animation: pf-fade 220ms ease-out backwards;
+  }
+
+  .pf-pop-in {
+    animation: pf-pop 240ms var(--ease-pf-out) backwards;
+  }
+
+  .pf-panel-in {
+    animation: pf-panel-in 300ms var(--ease-pf-out) backwards;
+  }
+
+  .pf-list-in {
+    animation: pf-rise 320ms var(--ease-pf-out) backwards;
+  }
+}
+
+/* Tier 2: same transitions, short cross-fade only (no displacement). */
+@media (prefers-reduced-motion: reduce) {
+  .pf-reveal,
+  .pf-fade-in,
+  .pf-pop-in,
+  .pf-panel-in,
+  .pf-list-in {
+    animation: pf-fade 150ms linear backwards;
+    /* Ignore per-element stagger: reduced motion should not wait to appear. */
+    animation-delay: 0ms !important;
+  }
+}
+
+/* Staggered group: children rise in sequence (used by KPI strip). */
+@media (prefers-reduced-motion: no-preference) {
+  .pf-stagger > * {
+    animation: pf-rise 480ms var(--ease-pf-out) backwards;
+  }
+
+  .pf-stagger > *:nth-child(1) {
+    animation-delay: 80ms;
+  }
+
+  .pf-stagger > *:nth-child(2) {
+    animation-delay: 140ms;
+  }
+
+  .pf-stagger > *:nth-child(3) {
+    animation-delay: 200ms;
+  }
+
+  .pf-stagger > *:nth-child(4) {
+    animation-delay: 260ms;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-stagger > * {
+    animation: pf-fade 150ms linear backwards;
+    animation-delay: 0ms !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Card lift (hover)
+   Shadow lives on a pseudo-element and only its opacity is animated, so the
+   blurred shadow is rasterized once (no per-frame paint).
+   -------------------------------------------------------------------------- */
+
+.pf-lift {
+  position: relative;
+  isolation: isolate;
+  transition: transform 240ms var(--ease-pf-out);
+}
+
+.pf-lift::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  box-shadow: 0 14px 34px rgba(31, 44, 51, 0.1);
+  opacity: 0;
+  transition: opacity 240ms var(--ease-pf-out);
+  pointer-events: none;
+}
+
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .pf-lift:hover {
+    transform: translate3d(0, -2px, 0);
+  }
+
+  .pf-lift:hover::after {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-lift {
+    transition: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Press / FAB
+   -------------------------------------------------------------------------- */
+
+.pf-press {
+  transition:
+    transform 140ms var(--ease-pf-out),
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    opacity 160ms ease;
+}
+
+.pf-press:active {
+  transform: scale(0.97);
+}
+
+.pf-fab {
+  transition:
+    transform 200ms var(--ease-pf-out),
+    background-color 200ms ease,
+    box-shadow 200ms ease;
+}
+
+.pf-fab:active {
+  transform: scale(0.94);
+}
+
+.pf-fab-icon {
+  transition: transform 260ms var(--ease-pf-spring);
+}
+
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .pf-fab:hover {
+    transform: translate3d(0, -2px, 0) scale(1.04);
+  }
+
+  .pf-fab:hover .pf-fab-icon {
+    transform: rotate(90deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-press,
+  .pf-fab {
+    transition:
+      background-color 150ms ease,
+      border-color 150ms ease,
+      color 150ms ease,
+      opacity 150ms ease;
+  }
+
+  .pf-press:active,
+  .pf-fab:active,
+  .pf-fab:hover,
+  .pf-fab:hover .pf-fab-icon {
+    transform: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Toast (FAB feedback) — leaves before React unmounts it at 3.5s
+   -------------------------------------------------------------------------- */
+
+.pf-toast {
+  animation-delay: var(--pf-delay, 0ms);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .pf-toast {
+    animation: pf-toast 3500ms var(--ease-pf-out) backwards;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-toast {
+    animation: pf-toast-fade 3500ms linear backwards;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Native dialogs (mobile drawer + add-chart modal)
+   -------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: no-preference) {
+  .pf-drawer-dialog[open]::backdrop {
+    animation: pf-fade 220ms ease-out backwards;
+  }
+
+  .pf-drawer-dialog[open] .pf-drawer-panel {
+    animation: pf-panel-in 280ms var(--ease-pf-out) backwards;
+  }
+
+  .pf-modal-dialog[open]::backdrop {
+    animation: pf-fade 200ms ease-out backwards;
+  }
+
+  .pf-modal-dialog[open] .pf-modal-card {
+    animation: pf-modal-in 240ms var(--ease-pf-out) backwards;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-drawer-dialog[open]::backdrop,
+  .pf-modal-dialog[open]::backdrop,
+  .pf-drawer-dialog[open] .pf-drawer-panel,
+  .pf-modal-dialog[open] .pf-modal-card {
+    animation: pf-fade 150ms linear backwards;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Recharts draw-in is JS-driven; the React hook gates it, this keeps the
+   tooltip/cursor color transitions at color-paint cost only.
+   -------------------------------------------------------------------------- */
