@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "13b0fde3-7e5a-4d86-b06c-7d1f46287bc2",
+  "status": "current",
+  "command": "deliver",
+  "type": "workflow",
+  "input": "/Users/macbook123/pipefy-pipe-dashboard/docs/archify/data-flow.json",
+  "output": "/Users/macbook123/pipefy-pipe-dashboard/docs/archify/data-flow.html",
+  "specification": {
+    "sha256": "862ce79ea10d0efe5ed4e972968eda63d80431676244bf9abd99e547f372a23a",
+    "bytes": 4644
+  },
+  "artifact": {
+    "sha256": "6d9440f27dfed7196f26a7e39377d3a8cdc27f47f46c37167faeb72a05ec8aea",
+    "bytes": 940306
+  }
+}

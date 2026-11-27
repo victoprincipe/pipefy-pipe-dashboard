@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "c893ff0e-7233-48e9-886f-e7fbf15a7191",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "/Users/macbook123/pipefy-pipe-dashboard/docs/archify/architecture.json",
+  "output": "/Users/macbook123/pipefy-pipe-dashboard/docs/archify/architecture.html",
+  "specification": {
+    "sha256": "00cae8941652350a5c769beedfb0711cc952ea4d74a8e0aa0a2eda47fda4c6ee",
+    "bytes": 7731
+  },
+  "artifact": {
+    "sha256": "5d2ae8b82afa31aace9489914c9ac7d19eadc3859a6032ec6b3125989c711a68",
+    "bytes": 958802
+  }
+}

@@ -1,0 +1,245 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "PipeLens · Arquitetura Geral",
+    "output": "docs/archify/architecture.html",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "feedback_links": false,
+    "repository": {
+      "url": "https://github.com/victoprincipe/pipefy-pipe-dashboard.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "f2033dec951ec8c546c4fd8adf2a1e72262e1b54"
+    },
+    "views": [
+      {
+        "id": "ingest",
+        "label": "Ingestão 20k",
+        "focus": ["pipefy_host", "sdk_client", "export_client", "xlsx_worker", "sync_orchestrator"],
+        "note": "Exportação em lote via SDK + parsing fora da main thread."
+      },
+      {
+        "id": "cache",
+        "label": "Cache & OLAP",
+        "focus": ["sync_orchestrator", "duckdb_engine", "indexeddb_cache"],
+        "note": "Parquet isolado por ${userId}::${pipeId} no IndexedDB com TTL de 15 min."
+      },
+      {
+        "id": "charts",
+        "label": "Motor de Gráficos",
+        "focus": ["dashboard_ui", "chart_engine", "duckdb_engine", "app_storage"],
+        "note": "Semântica explícita sem fallback silencioso + visões no App Storage."
+      }
+    ]
+  },
+  "layout": {
+    "mode": "auto"
+  },
+  "components": [
+    {
+      "id": "pipefy_host",
+      "type": "external",
+      "label": "Pipefy Web App",
+      "sublabel": "app.pipefy.com iframe",
+      "tag": "pipe-view",
+      "explanation": "Hospeda o dashboard dentro de um iframe cross-origin declarado em public/manifest.json.",
+      "sources": [{ "path": "public/manifest.json", "line": 1, "end_line": 11 }]
+    },
+    {
+      "id": "sdk_client",
+      "type": "security",
+      "label": "Pipefy Apps SDK",
+      "sublabel": "me + pipeId + auth",
+      "tag": "zero tokens",
+      "explanation": "Canal autenticado via postMessage; evita tokens hardcoded no frontend.",
+      "sources": [{ "path": "src/utils/pipefySdkUtils.ts", "line": 24, "end_line": 101 }]
+    },
+    {
+      "id": "dashboard_ui",
+      "type": "frontend",
+      "label": "Interface Dashboard",
+      "sublabel": "Views, Studio e Cards",
+      "tag": "Next.js 16",
+      "explanation": "Orquestra visões, KPIs executivos, modal estúdio e renderização Recharts.",
+      "sources": [{ "path": "src/components/PipefyDashboard.tsx", "line": 1, "end_line": 120 }]
+    },
+    {
+      "id": "export_client",
+      "type": "cloud",
+      "label": "Exportação em Lote",
+      "sublabel": "[PipeLens] Snapshot",
+      "tag": "polling 95s",
+      "explanation": "Cria/reutiliza relatório Pipefy e baixa o .xlsx completo em vez de paginar 400 vezes.",
+      "sources": [{ "path": "src/lib/pipefyExportClient.ts", "line": 1, "end_line": 120 }]
+    },
+    {
+      "id": "xlsx_worker",
+      "type": "messagebus",
+      "label": "Web Worker SheetJS",
+      "sublabel": "Parse off-main-thread",
+      "tag": "500 linhas",
+      "explanation": "Converte .xlsx/.csv em dataset tipado fora da thread de UI para manter 60fps.",
+      "sources": [{ "path": "src/workers/xlsxToSql.worker.ts", "line": 1, "end_line": 50 }]
+    },
+    {
+      "id": "sync_orchestrator",
+      "type": "backend",
+      "label": "Sync & SWR Engine",
+      "sublabel": "HIT / STALE / MISS",
+      "tag": "TTL 15 min",
+      "explanation": "Serve cache Parquet imediato em STALE enquanto revalida o Pipefy em segundo plano.",
+      "sources": [{ "path": "src/utils/pipefySyncUtils.ts", "line": 57, "end_line": 160 }]
+    },
+    {
+      "id": "duckdb_engine",
+      "type": "database",
+      "label": "DuckDB-WASM OLAP",
+      "sublabel": "Bundles mvp / eh",
+      "tag": "single-thread",
+      "explanation": "Executa SQL colunar no browser sem SharedArrayBuffer (compatível com iframe sem COOP/COEP).",
+      "sources": [{ "path": "src/lib/pipefyDuckDb.ts", "line": 30, "end_line": 153 }]
+    },
+    {
+      "id": "indexeddb_cache",
+      "type": "database",
+      "label": "IndexedDB Parquet",
+      "sublabel": "${userId}::${pipeId}",
+      "tag": "isolado",
+      "explanation": "Armazena snapshot binário Parquet isolado por usuário e valida record.userId na leitura.",
+      "sources": [{ "path": "src/lib/pipefyIndexedDb.ts", "line": 10, "end_line": 113 }]
+    },
+    {
+      "id": "chart_engine",
+      "type": "backend",
+      "label": "Motor de Gráficos",
+      "sublabel": "Semântica + SQL seguro",
+      "tag": "sem fallback",
+      "explanation": "Resolve colunas por nome/label/papel sem cair em columns[0] e sanitiza identificadores SQL.",
+      "sources": [
+        { "path": "src/utils/chartConfigResolver.ts", "line": 93, "end_line": 140 },
+        { "path": "src/utils/duckDbChartUtils.ts", "line": 1, "end_line": 80 }
+      ]
+    },
+    {
+      "id": "app_storage",
+      "type": "cloud",
+      "label": "Pipefy App Storage",
+      "sublabel": "p.set / p.get visões",
+      "tag": "public->private",
+      "explanation": "Persiste visões compartilhadas no Pipe com fallback automático para escopo privado.",
+      "sources": [{ "path": "src/lib/pipefyAppStorage.ts", "line": 80, "end_line": 120 }]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Iframe Cross-Origin (Browser Runtime)",
+      "wraps": [
+        "sdk_client",
+        "dashboard_ui",
+        "export_client",
+        "xlsx_worker",
+        "sync_orchestrator",
+        "duckdb_engine",
+        "indexeddb_cache",
+        "chart_engine"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "host-to-sdk",
+      "from": "pipefy_host",
+      "to": "sdk_client",
+      "label": "postMessage SDK",
+      "variant": "security"
+    },
+    {
+      "id": "sdk-to-ui",
+      "from": "sdk_client",
+      "to": "dashboard_ui",
+      "label": "sessão + contexto"
+    },
+    {
+      "id": "sdk-to-export",
+      "from": "sdk_client",
+      "to": "export_client",
+      "label": "query/mutation"
+    },
+    {
+      "id": "export-to-worker",
+      "from": "export_client",
+      "to": "xlsx_worker",
+      "label": "buffer .xlsx",
+      "variant": "emphasis"
+    },
+    {
+      "id": "worker-to-sync",
+      "from": "xlsx_worker",
+      "to": "sync_orchestrator",
+      "label": "rows + tipos"
+    },
+    {
+      "id": "sync-to-idb",
+      "from": "sync_orchestrator",
+      "to": "indexeddb_cache",
+      "label": "Parquet + TTL",
+      "variant": "emphasis"
+    },
+    {
+      "id": "sync-to-duckdb",
+      "from": "sync_orchestrator",
+      "to": "duckdb_engine",
+      "label": "ingest / load",
+      "variant": "emphasis"
+    },
+    {
+      "id": "ui-to-charts",
+      "from": "dashboard_ui",
+      "to": "chart_engine",
+      "label": "config gráfico"
+    },
+    {
+      "id": "charts-to-duckdb",
+      "from": "chart_engine",
+      "to": "duckdb_engine",
+      "label": "SQL seguro",
+      "variant": "emphasis"
+    },
+    {
+      "id": "ui-to-storage",
+      "from": "dashboard_ui",
+      "to": "app_storage",
+      "label": "salvar visões",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Por que no Browser?",
+      "items": [
+        "Zero backend de dados: DuckDB-WASM roda OLAP local no cliente",
+        "Bundles single-threaded (mvp/eh) funcionam sem headers COOP/COEP"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Isolamento Multi-Usuário",
+      "items": [
+        "Chave ${userId}::${pipeId} evita colisão entre membros no mesmo browser",
+        "Leitura valida record.userId === userId explicitamente"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Segurança por Padrão",
+      "items": [
+        "Autenticação via canal Pipefy Apps SDK sem tokens no bundle",
+        "CSP frame-ancestors restrito a app.pipefy.com e *.pipefy.com"
+      ]
+    }
+  ]
+}

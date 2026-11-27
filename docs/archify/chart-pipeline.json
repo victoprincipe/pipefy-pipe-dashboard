@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "PipeLens · Motor de Gráficos Sem Fallbacks Silenciosos",
+    "output": "docs/archify/chart-pipeline.html",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "feedback_links": false,
+    "repository": {
+      "url": "https://github.com/victoprincipe/pipefy-pipe-dashboard.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "f2033dec951ec8c546c4fd8adf2a1e72262e1b54"
+    }
+  },
+  "stages": [
+    { "label": "1. Schema" },
+    { "label": "2. Semântica" },
+    { "label": "3. Resolução" },
+    { "label": "4. SQL Seguro" },
+    { "label": "5. Render" }
+  ],
+  "nodes": [
+    {
+      "id": "cols_schema",
+      "type": "database",
+      "label": "SqlColumnDef[]",
+      "sublabel": "tipos + 500 amostras",
+      "stage": 0,
+      "row": 0,
+      "tag": "dataset",
+      "sources": [{ "path": "src/workers/xlsxToSql.worker.ts", "line": 17, "end_line": 49 }]
+    },
+    {
+      "id": "chart_cfg",
+      "type": "frontend",
+      "label": "ChartConfig",
+      "sublabel": "visão + overrides",
+      "stage": 0,
+      "row": 2,
+      "tag": "user intent",
+      "sources": [{ "path": "src/utils/chartConfigResolver.ts", "line": 15, "end_line": 44 }]
+    },
+    {
+      "id": "semantic_profiler",
+      "type": "backend",
+      "label": "Profiler Semântico",
+      "sublabel": "17 papéis + regras",
+      "stage": 1,
+      "row": 1,
+      "tag": "chartSemantics",
+      "sources": [{ "path": "src/utils/columnRoleRules.ts", "line": 47, "end_line": 60 }]
+    },
+    {
+      "id": "config_resolver",
+      "type": "security",
+      "label": "Config Resolver",
+      "sublabel": "nunca columns[0]",
+      "stage": 2,
+      "row": 1,
+      "tag": "explícito",
+      "sources": [{ "path": "src/utils/chartConfigResolver.ts", "line": 100, "end_line": 140 }]
+    },
+    {
+      "id": "issue_banner",
+      "type": "security",
+      "label": "ChartConfigIssue",
+      "sublabel": "alerta + correção",
+      "stage": 2,
+      "row": 3,
+      "tag": "schema drift",
+      "sources": [{ "path": "src/utils/chartConfigResolver.ts", "line": 22, "end_line": 44 }]
+    },
+    {
+      "id": "sql_builder",
+      "type": "backend",
+      "label": "SQL Builder",
+      "sublabel": "quoteIdent / Literal",
+      "stage": 3,
+      "row": 1,
+      "tag": "anti-injection",
+      "sources": [{ "path": "src/utils/duckDbChartUtils.ts", "line": 1, "end_line": 80 }]
+    },
+    {
+      "id": "duckdb_query",
+      "type": "database",
+      "label": "DuckDB-WASM",
+      "sublabel": "12 agregações OLAP",
+      "stage": 3,
+      "row": 3,
+      "tag": "ms latency",
+      "sources": [{ "path": "src/lib/pipefyDuckDb.ts", "line": 30, "end_line": 153 }]
+    },
+    {
+      "id": "chart_renderer",
+      "type": "frontend",
+      "label": "ChartRenderer",
+      "sublabel": "8 gráficos + CSV",
+      "stage": 4,
+      "row": 1,
+      "tag": "Recharts",
+      "sources": [{ "path": "src/components/charts/chartTypeRegistry.tsx", "line": 35, "end_line": 80 }]
+    }
+  ],
+  "flows": [
+    {
+      "id": "f1",
+      "from": "cols_schema",
+      "to": "semantic_profiler",
+      "label": "metadados + stats",
+      "variant": "emphasis"
+    },
+    {
+      "id": "f2",
+      "from": "chart_cfg",
+      "to": "config_resolver",
+      "label": "referências",
+      "variant": "default"
+    },
+    {
+      "id": "f3",
+      "from": "semantic_profiler",
+      "to": "config_resolver",
+      "label": "ColumnProfile[]",
+      "variant": "emphasis"
+    },
+    {
+      "id": "f4",
+      "from": "config_resolver",
+      "to": "issue_banner",
+      "label": "coluna ausente",
+      "variant": "security"
+    },
+    {
+      "id": "f5",
+      "from": "config_resolver",
+      "to": "sql_builder",
+      "label": "config válida",
+      "variant": "emphasis"
+    },
+    {
+      "id": "f6",
+      "from": "sql_builder",
+      "to": "duckdb_query",
+      "label": "SELECT seguro",
+      "variant": "emphasis"
+    },
+    {
+      "id": "f7",
+      "from": "duckdb_query",
+      "to": "chart_renderer",
+      "label": "série + KPI",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "rose",
+      "title": "Zero Fallback Silencioso",
+      "items": [
+        "Ordem determinística: exact -> normalized -> label -> role único",
+        "Nunca substitui coluna removida por columns[0]; emite ChartConfigIssue acionável"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Registry Orientado a Capacidades",
+      "items": [
+        "8 tipos de visualização e 12 agregações derivados de chartTypeRegistry",
+        "Prevenção de SQL Injection via quoteIdent, quoteLiteral e escapeIlikeLiteral"
+      ]
+    }
+  ]
+}

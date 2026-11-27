@@ -1,0 +1,135 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "PipeLens · Ingestão 20k Cards & Cache SWR",
+    "output": "docs/archify/data-flow.html",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "feedback_links": false,
+    "repository": {
+      "url": "https://github.com/victoprincipe/pipefy-pipe-dashboard.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "f2033dec951ec8c546c4fd8adf2a1e72262e1b54"
+    }
+  },
+  "lanes": [
+    { "id": "session", "label": "Sessão & Cache Check" },
+    { "id": "swr", "label": "SWR & Revalidação", "variant": "exception" },
+    { "id": "ingest", "label": "Pipefy Batch Export" },
+    { "id": "olap", "label": "Worker & DuckDB-WASM" }
+  ],
+  "phases": [
+    { "id": "p_cache", "label": "1. Verificar Cache", "fromCol": 0, "toCol": 2 },
+    { "id": "p_sync", "label": "2. Sincronizar Lote", "fromCol": 3, "toCol": 4, "variant": "emphasis" },
+    { "id": "p_olap", "label": "3. Compactar & Servir", "fromCol": 5, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": [
+    "sdk_init",
+    "idb_lookup",
+    "cache_hit",
+    "export_report",
+    "worker_parse",
+    "duckdb_parquet"
+  ],
+  "nodes": [
+    {
+      "id": "sdk_init",
+      "lane": "session",
+      "col": 0,
+      "type": "security",
+      "label": "Sessão SDK",
+      "sublabel": "me + pipeId",
+      "tag": "pipefySdkUtils",
+      "sources": [{ "path": "src/utils/pipefySdkUtils.ts", "line": 74, "end_line": 101 }]
+    },
+    {
+      "id": "idb_lookup",
+      "lane": "session",
+      "col": 1,
+      "type": "database",
+      "label": "Ler IndexedDB",
+      "sublabel": "${userId}::${pipeId}",
+      "tag": "valida userId",
+      "sources": [{ "path": "src/lib/pipefyIndexedDb.ts", "line": 62, "end_line": 88 }]
+    },
+    {
+      "id": "cache_hit",
+      "lane": "session",
+      "col": 2,
+      "type": "database",
+      "label": "Cache HIT (<=15m)",
+      "sublabel": "Parquet direto",
+      "tag": "0 reqs Pipefy",
+      "sources": [{ "path": "src/utils/pipefySyncUtils.ts", "line": 57, "end_line": 79 }]
+    },
+    {
+      "id": "stale_swr",
+      "lane": "swr",
+      "col": 2,
+      "type": "security",
+      "label": "STALE (>15m)",
+      "sublabel": "Restaura + revalida",
+      "tag": "SWR imediato",
+      "sources": [{ "path": "src/lib/pipefyIndexedDb.ts", "line": 81, "end_line": 84 }]
+    },
+    {
+      "id": "export_report",
+      "lane": "ingest",
+      "col": 3,
+      "type": "cloud",
+      "label": "Exportar .xlsx",
+      "sublabel": "[PipeLens] Snapshot",
+      "tag": "polling <=95s",
+      "sources": [{ "path": "src/lib/pipefyExportClient.ts", "line": 1, "end_line": 120 }]
+    },
+    {
+      "id": "worker_parse",
+      "lane": "olap",
+      "col": 4,
+      "type": "messagebus",
+      "label": "Web Worker",
+      "sublabel": "SheetJS + tipos",
+      "tag": "UI livre",
+      "sources": [{ "path": "src/workers/xlsxToSql.worker.ts", "line": 17, "end_line": 49 }]
+    },
+    {
+      "id": "duckdb_parquet",
+      "lane": "olap",
+      "col": 5,
+      "type": "database",
+      "label": "DuckDB -> Parquet",
+      "sublabel": "Salva no IndexedDB",
+      "tag": "OLAP pronto",
+      "sources": [{ "path": "src/lib/pipefyDuckDb.ts", "line": 155, "end_line": 160 }]
+    }
+  ],
+  "edges": [
+    { "id": "e1", "from": "sdk_init", "to": "idb_lookup", "variant": "emphasis" },
+    { "id": "e2", "from": "idb_lookup", "to": "cache_hit", "label": "HIT", "variant": "emphasis" },
+    { "id": "e3", "from": "idb_lookup", "to": "stale_swr", "label": "STALE", "variant": "security", "role": "branch" },
+    { "id": "e4", "from": "stale_swr", "to": "export_report", "label": "background sync", "variant": "dashed", "role": "async" },
+    { "id": "e5", "from": "cache_hit", "to": "export_report", "label": "MISS / force", "variant": "default" },
+    { "id": "e6", "from": "export_report", "to": "worker_parse", "label": "ArrayBuffer", "variant": "emphasis" },
+    { "id": "e7", "from": "worker_parse", "to": "duckdb_parquet", "label": "read_json + COPY", "variant": "emphasis" }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Por que Batch + Parquet?",
+      "items": [
+        "Paginar 20k cards via GraphQL (50/pág) = ~400 requisições sujeitas a rate limit",
+        "Exportação única + Parquet binário reduz tempo de abertura recorrente a milissegundos"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Estratégia SWR (15 min)",
+      "items": [
+        "HIT carrega o Parquet direto no DuckDB-WASM sem chamar o Pipefy",
+        "STALE mostra os dados imediatamente e sincroniza um novo snapshot em background"
+      ]
+    }
+  ]
+}

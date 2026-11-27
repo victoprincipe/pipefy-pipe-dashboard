@@ -17,11 +17,13 @@
   },
   "dependencies": {
     "@duckdb/duckdb-wasm": "^1.33.1-dev57.0",
+    "@remotion/player": "^4.0.547",
     "lucide-react": "^1.81.0",
     "next": "16.4.6",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "recharts": "^3.11.1",
+    "remotion": "^4.0.547",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
